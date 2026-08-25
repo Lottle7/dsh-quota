@@ -1,0 +1,36 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  publish-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run test:ci
+      - name: Pack prebuilt DSH bundle
+        shell: bash
+        run: |
+          mkdir -p .release
+          npm pack --pack-destination .release
+          mv .release/dsh-quota-*.tgz dsh-quota.tgz
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release create "$GITHUB_REF_NAME"
+          dsh-quota.tgz
+          --verify-tag
+          --title "dsh-quota $GITHUB_REF_NAME"
+          --generate-notes

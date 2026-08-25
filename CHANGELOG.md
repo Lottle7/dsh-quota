@@ -3,6 +3,20 @@
 All notable changes to this project are documented in this file. The project
 follows [Semantic Versioning](https://semver.org/).
 
+## [0.5.1] - 2026-08-25
+
+### Added
+
+- English-first project page with a complete Chinese guide and search-oriented package metadata.
+- Tagged-release workflow that publishes a prebuilt `dsh-quota.tgz` DSH Bundle.
+- Git-source installation support through the standard `prepare` lifecycle.
+
+### Changed
+
+- Documented the official `dsh plugin --profile web` install, update and removal flow.
+- Declared DSH Host packages as peers and exported the Bundle patch explicitly.
+- Updated the official GitHub Actions to their current major versions.
+
 ## [0.5.0] - 2026-08-25
 
 ### Added

@@ -5,6 +5,7 @@ node_modules/
 .env
 .env.local
 dist/
+.release/
 .tmp/
 visual-*.png
 coverage/
