@@ -131,8 +131,8 @@ export function apply(ctx: QuotaClientContext): void {
     if (usageReloading) return
     usageReloading = true
     try {
-      const ledger = await api.getUsage(30)
-      usageStore.replaceFromLedger(ledger.entries)
+      const ledger = await api.getUsage({ days: 30, limit: 30 })
+      usageStore.replaceFromSummary(ledger.summary.buckets)
       store.actions.applyLedger(ledger)
       pushUsage()
       if (ledger.backfill.status === "scanning") scheduleUsageReload(800)
@@ -353,6 +353,8 @@ export function apply(ctx: QuotaClientContext): void {
               onSetMode={(mode) => store.actions.setMode(mode)}
               onRefresh={() => store.actions.refreshNow(state.mode === "manual" ? state.manualId ?? undefined : undefined, true)}
               onSyncUsage={synchronizeHistory}
+              onQueryUsage={(query) => api.getUsage({ days: 30, limit: 30, ...query })}
+              onExportUsage={(query) => api.exportUsageCsv({ days: 30, ...query })}
               onSavePrice={saveLocalPrice}
               onSetFloatingMode={(mode) => updateFloating({ ...floating, mode })}
               onResetFloatingPosition={() => updateFloating({ ...floating, position: null })}

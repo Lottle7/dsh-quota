@@ -14,7 +14,7 @@ import type {
   SettingsSnapshotResponse,
 } from "../shared/types.ts"
 import { RPC_PATHS } from "../shared/types.ts"
-import type { LegacyUsageImportResult, LegacyUsageImportRow, UsageLedgerResponse } from "../shared/ledger.ts"
+import type { LegacyUsageImportResult, LegacyUsageImportRow, UsageLedgerQuery, UsageLedgerResponse } from "../shared/ledger.ts"
 
 export class QuotaApiError extends Error {
   readonly status: number
@@ -45,7 +45,8 @@ export interface QuotaApi {
   getProvider(id: ProviderId): Promise<{ snapshot: QuotaSnapshot; fallback?: QuotaSnapshot }>
   refresh(id?: ProviderId, selection?: SessionSelectionHint): Promise<CurrentQuotaResponse | { snapshot: QuotaSnapshot; fallback?: QuotaSnapshot }>
   getSettings(): Promise<SettingsSnapshotResponse>
-  getUsage(days?: number): Promise<UsageLedgerResponse>
+  getUsage(query?: UsageLedgerQuery): Promise<UsageLedgerResponse>
+  exportUsageCsv(query?: UsageLedgerQuery): Promise<Blob>
   importLegacyUsage(rows: readonly LegacyUsageImportRow[]): Promise<LegacyUsageImportResult>
   backfillUsage(): Promise<void>
 }
@@ -94,11 +95,20 @@ export function createQuotaApi(base = ""): QuotaApi {
         await fetch(url(RPC_PATHS.getSettings), { method: "GET" }),
       )
     },
-    async getUsage(days = 30) {
-      const search = new URLSearchParams({ days: String(days), limit: "5000" })
+    async getUsage(query = {}) {
+      const search = usageSearch(query)
       return readJson<UsageLedgerResponse>(
         await fetch(`${url(RPC_PATHS.getUsage)}?${search.toString()}`, { method: "GET" }),
       )
+    },
+    async exportUsageCsv(query = {}) {
+      const search = usageSearch(query)
+      const response = await fetch(`${url(RPC_PATHS.exportUsage)}?${search.toString()}`, { method: "GET" })
+      if (!response.ok) {
+        const message = await response.text()
+        throw new QuotaApiError(response.status, message.length > 0 ? message.slice(0, 300) : `HTTP ${response.status}`)
+      }
+      return response.blob()
     },
     async importLegacyUsage(rows) {
       return readJson<LegacyUsageImportResult>(
@@ -119,4 +129,17 @@ export function createQuotaApi(base = ""): QuotaApi {
       )
     },
   }
+}
+
+function usageSearch(query: UsageLedgerQuery): URLSearchParams {
+  const search = new URLSearchParams()
+  if (query.days !== undefined) search.set("days", String(query.days))
+  if (query.limit !== undefined) search.set("limit", String(query.limit))
+  if (query.cursor !== undefined) search.set("cursor", query.cursor)
+  if (query.billingProvider !== undefined) search.set("provider", query.billingProvider)
+  if (query.model !== undefined) search.set("model", query.model)
+  if (query.sessionId !== undefined) search.set("sessionId", query.sessionId)
+  if (query.source !== undefined) search.set("source", query.source)
+  if (query.search !== undefined) search.set("search", query.search)
+  return search
 }

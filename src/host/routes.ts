@@ -8,7 +8,7 @@ import type { QuotaService } from "./quota-service.ts"
 import { RPC_PATHS } from "../shared/types.ts"
 import type { CurrentQuotaResponse, QuotaSnapshot, SessionSelectionHint } from "../shared/types.ts"
 import type { PricingTable } from "../shared/usage.ts"
-import type { LegacyUsageImportResult, LegacyUsageImportRow, UsageLedgerResponse } from "../shared/ledger.ts"
+import type { LegacyUsageImportResult, LegacyUsageImportRow, UsageLedgerQuery, UsageLedgerResponse } from "../shared/ledger.ts"
 import { sanitize } from "./adapters/base.ts"
 import { REDACTED_MARKER } from "../shared/constants.ts"
 
@@ -27,7 +27,8 @@ export interface QuotaRoutesDeps {
   isEnabled?: () => boolean
   getSettings?: () => QuotaSettingsSnapshot
   usageLedger?: {
-    query(days?: number, limit?: number): UsageLedgerResponse
+    query(input?: UsageLedgerQuery): UsageLedgerResponse
+    exportCsv(input?: UsageLedgerQuery): string
     importLegacy(rows: readonly LegacyUsageImportRow[]): Promise<LegacyUsageImportResult>
     startBackfill(): Promise<void>
   }
@@ -117,14 +118,18 @@ export function makeQuotaRoutes(deps: QuotaRoutesDeps): {
           writeJson(res, 503, { error: "Host usage ledger is unavailable" })
           return
         }
-        const search = requestUrl(req).searchParams
-        const days = cleanInteger(search.get("days"), 1, 3650, 30)
-        const limit = cleanInteger(search.get("limit"), 1, 5_000, 5_000)
         // The ledger response is built from a closed, validated shape and
         // contains no credentials. The generic credential sanitizer cannot be
         // used here because it intentionally redacts every field named
         // `tokens`, which would turn all usage totals into "[redacted]".
-        writeJson(res, 200, deps.usageLedger.query(days, limit))
+        writeJson(res, 200, deps.usageLedger.query(usageQueryFromRequest(req)))
+      }),
+      route(RPC_PATHS.exportUsage, "GET", async (req, res) => {
+        if (deps.usageLedger === undefined) {
+          writeJson(res, 503, { error: "Host usage ledger is unavailable" })
+          return
+        }
+        writeCsv(res, deps.usageLedger.exportCsv(usageQueryFromRequest(req)))
       }),
       route(RPC_PATHS.importUsage, "POST", async (req, res) => {
         if (deps.usageLedger === undefined) {
@@ -239,6 +244,27 @@ function cleanInteger(value: string | null, min: number, max: number, fallback: 
   return Number.isSafeInteger(parsed) ? Math.max(min, Math.min(max, parsed)) : fallback
 }
 
+function usageQueryFromRequest(req: IncomingMessage): UsageLedgerQuery {
+  const search = requestUrl(req).searchParams
+  const billingProvider = cleanParam(search.get("provider"), 160)
+  const model = cleanParam(search.get("model"), 320)
+  const sessionId = cleanParam(search.get("sessionId"), 160)
+  const cursor = cleanParam(search.get("cursor"), 1_024)
+  const text = cleanParam(search.get("search"), 160)
+  const sourceValue = search.get("source")
+  const source = sourceValue === "session-log" || sourceValue === "browser-migration" ? sourceValue : undefined
+  return {
+    days: cleanInteger(search.get("days"), 1, 3650, 30),
+    limit: cleanInteger(search.get("limit"), 1, 200, 30),
+    ...(billingProvider === undefined ? {} : { billingProvider }),
+    ...(model === undefined ? {} : { model }),
+    ...(sessionId === undefined ? {} : { sessionId }),
+    ...(cursor === undefined ? {} : { cursor }),
+    ...(text === undefined ? {} : { search: text }),
+    ...(source === undefined ? {} : { source }),
+  }
+}
+
 async function readJsonBody(req: IncomingMessage, maxBytes: number): Promise<unknown> {
   const chunks: Buffer[] = []
   let size = 0
@@ -328,6 +354,17 @@ function jsonPostGuard(req: IncomingMessage, res: ServerResponse): boolean {
 function writeJson(res: ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, JSON_HEADERS)
   res.end(JSON.stringify(body))
+}
+
+function writeCsv(res: ServerResponse, body: string): void {
+  res.writeHead(200, {
+    "content-type": "text/csv; charset=utf-8",
+    "content-disposition": `attachment; filename="dsh-quota-usage-${new Date().toISOString().slice(0, 10)}.csv"`,
+    "cache-control": "no-store",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff",
+  })
+  res.end(body)
 }
 
 function redactErrorMessage(error: unknown): string {

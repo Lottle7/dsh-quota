@@ -4,7 +4,10 @@ import type {
   LegacyUsageImportRow,
   UsageBackfillState,
   UsageLedgerEntry,
+  UsageLedgerQuery,
   UsageLedgerResponse,
+  UsageLedgerSummary,
+  UsageSummaryBucket,
 } from "../shared/ledger.ts"
 import type { TokenUsageTotals } from "../shared/usage.ts"
 import { ZERO_USAGE, diffUsage } from "../shared/usage.ts"
@@ -127,7 +130,25 @@ export const USAGE_LEDGER_DOMAIN_SPEC = {
 } as const
 
 const DAY_MS = 86_400_000
-const MAX_QUERY_ENTRIES = 5_000
+const DEFAULT_PAGE_SIZE = 30
+const MAX_PAGE_SIZE = 200
+
+interface NormalizedUsageQuery {
+  cutoff: number
+  limit: number
+  cursor?: string
+  billingProvider?: string
+  model?: string
+  sessionId?: string
+  source?: UsageLedgerEntry["source"]
+  search?: string
+}
+
+interface SortableUsageEntry {
+  occurredAt: number
+  seq: number | null
+  id: string
+}
 
 /** Durable Host-side Token ledger backed by DSH's official storage-domain. */
 export class HostUsageLedger {
@@ -231,31 +252,85 @@ export class HostUsageLedger {
     }
   }
 
-  query(days = 30, limit = MAX_QUERY_ENTRIES): UsageLedgerResponse {
-    const safeDays = clampInteger(days, 1, this.retainedDays)
-    const safeLimit = clampInteger(limit, 1, MAX_QUERY_ENTRIES)
-    const cutoff = this.now() - safeDays * DAY_MS
-    const entries: UsageLedgerEntry[] = []
-    const sessions = new Set<string>()
-    for (const [sessionId, row] of this.sessionTable.entries()) {
-      let included = false
-      for (const entry of Object.values(row.entries)) {
-        if (entry.occurredAt < cutoff) continue
-        entries.push(entry)
-        included = true
-      }
-      if (included) sessions.add(sessionId)
-    }
-    for (const [, entry] of this.importTable.entries()) {
-      if (entry.occurredAt >= cutoff && totalTokens(entry.tokens) > 0) entries.push(entry)
-    }
-    entries.sort((a, b) => b.occurredAt - a.occurredAt || compareNullable(b.seq, a.seq))
+  query(input: UsageLedgerQuery = {}): UsageLedgerResponse {
+    const query = this.normalizeQuery(input)
+    const allEntries = this.collect(query)
+    const summary = summarizeUsage(allEntries)
+    const start = pageStart(allEntries, query.cursor)
+    const entries = allEntries.slice(start, start + query.limit)
+    const hasMore = start + entries.length < allEntries.length
+    const nextCursor = hasMore && entries.length > 0 ? encodeCursor(entries[entries.length - 1]) : null
     return {
-      entries: entries.slice(0, safeLimit),
-      sessionCount: sessions.size,
+      entries,
+      nextCursor,
+      hasMore,
+      summary,
+      sessionCount: summary.sessionCount,
       retainedDays: this.retainedDays,
       backfill: { ...this.backfill },
     }
+  }
+
+  /** Export every filtered row, independently of UI pagination. */
+  exportCsv(input: UsageLedgerQuery = {}): string {
+    const query = this.normalizeQuery({ ...input, cursor: undefined, limit: MAX_PAGE_SIZE })
+    const lines = [
+      [
+        "occurred_at", "session_id", "turn", "step", "route_provider", "billing_provider", "model",
+        "uncached_input_tokens", "cache_read_tokens", "cache_write_tokens", "output_tokens", "total_tokens", "source",
+      ].join(","),
+    ]
+    for (const entry of this.collect(query)) {
+      lines.push([
+        new Date(entry.occurredAt).toISOString(),
+        entry.sessionId,
+        entry.turn ?? "",
+        entry.step ?? "",
+        entry.routeProvider,
+        entry.billingProvider,
+        entry.model,
+        entry.tokens.uncachedInputTokens,
+        entry.tokens.cacheReadTokens,
+        entry.tokens.cacheWriteTokens,
+        entry.tokens.outputTokens,
+        totalTokens(entry.tokens),
+        entry.source,
+      ].map(csvCell).join(","))
+    }
+    return `\uFEFF${lines.join("\r\n")}\r\n`
+  }
+
+  private normalizeQuery(input: UsageLedgerQuery): NormalizedUsageQuery {
+    const safeDays = clampInteger(input.days ?? 30, 1, this.retainedDays)
+    const cursor = cleanQueryString(input.cursor, 1_024)
+    const billingProvider = cleanQueryString(input.billingProvider, 160)?.toLowerCase()
+    const model = cleanQueryString(input.model, 320)?.toLowerCase()
+    const sessionId = cleanQueryString(input.sessionId, 160)?.toLowerCase()
+    const search = cleanQueryString(input.search, 160)?.toLowerCase()
+    return {
+      cutoff: this.now() - safeDays * DAY_MS,
+      limit: clampInteger(input.limit ?? DEFAULT_PAGE_SIZE, 1, MAX_PAGE_SIZE),
+      ...(cursor === undefined ? {} : { cursor }),
+      ...(billingProvider === undefined ? {} : { billingProvider }),
+      ...(model === undefined ? {} : { model }),
+      ...(sessionId === undefined ? {} : { sessionId }),
+      ...(input.source === "session-log" || input.source === "browser-migration" ? { source: input.source } : {}),
+      ...(search === undefined ? {} : { search }),
+    }
+  }
+
+  private collect(query: NormalizedUsageQuery): UsageLedgerEntry[] {
+    const entries: UsageLedgerEntry[] = []
+    for (const [, row] of this.sessionTable.entries()) {
+      for (const entry of Object.values(row.entries)) {
+        if (matchesQuery(entry, query)) entries.push(entry)
+      }
+    }
+    for (const [, entry] of this.importTable.entries()) {
+      if (totalTokens(entry.tokens) > 0 && matchesQuery(entry, query)) entries.push(entry)
+    }
+    entries.sort(compareEntries)
+    return entries
   }
 
   /**
@@ -507,8 +582,99 @@ function totalTokens(value: TokenUsageTotals): number {
   return value.uncachedInputTokens + value.cacheReadTokens + value.cacheWriteTokens + value.outputTokens
 }
 
-function compareNullable(a: number | null, b: number | null): number {
-  return (a ?? -1) - (b ?? -1)
+function matchesQuery(entry: UsageLedgerEntry, query: NormalizedUsageQuery): boolean {
+  if (entry.occurredAt < query.cutoff) return false
+  if (query.billingProvider !== undefined && entry.billingProvider.toLowerCase() !== query.billingProvider) return false
+  if (query.model !== undefined && entry.model.toLowerCase() !== query.model) return false
+  if (query.sessionId !== undefined && entry.sessionId.toLowerCase() !== query.sessionId) return false
+  if (query.source !== undefined && entry.source !== query.source) return false
+  if (query.search !== undefined) {
+    const haystack = `${entry.sessionId}\n${entry.routeProvider}\n${entry.billingProvider}\n${entry.model}`.toLowerCase()
+    if (!haystack.includes(query.search)) return false
+  }
+  return true
+}
+
+function summarizeUsage(entries: readonly UsageLedgerEntry[]): UsageLedgerSummary {
+  const tokens = { ...ZERO_USAGE }
+  const sessions = new Set<string>()
+  const buckets = new Map<string, UsageSummaryBucket>()
+  for (const entry of entries) {
+    tokens.uncachedInputTokens += entry.tokens.uncachedInputTokens
+    tokens.cacheReadTokens += entry.tokens.cacheReadTokens
+    tokens.cacheWriteTokens += entry.tokens.cacheWriteTokens
+    tokens.outputTokens += entry.tokens.outputTokens
+    if (entry.source === "session-log") sessions.add(entry.sessionId)
+    const date = localDateString(entry.occurredAt)
+    const key = `${date}\u0000${entry.billingProvider}\u0000${entry.model}`
+    let bucket = buckets.get(key)
+    if (bucket === undefined) {
+      bucket = {
+        date,
+        billingProvider: entry.billingProvider,
+        model: entry.model,
+        calls: 0,
+        tokens: { ...ZERO_USAGE },
+      }
+      buckets.set(key, bucket)
+    }
+    bucket.calls += 1
+    bucket.tokens.uncachedInputTokens += entry.tokens.uncachedInputTokens
+    bucket.tokens.cacheReadTokens += entry.tokens.cacheReadTokens
+    bucket.tokens.cacheWriteTokens += entry.tokens.cacheWriteTokens
+    bucket.tokens.outputTokens += entry.tokens.outputTokens
+  }
+  return {
+    calls: entries.length,
+    sessionCount: sessions.size,
+    tokens,
+    buckets: [...buckets.values()].sort((a, b) =>
+      b.date.localeCompare(a.date) ||
+      a.billingProvider.localeCompare(b.billingProvider) ||
+      a.model.localeCompare(b.model)),
+  }
+}
+
+function compareEntries(a: SortableUsageEntry, b: SortableUsageEntry): number {
+  return b.occurredAt - a.occurredAt ||
+    (b.seq ?? -1) - (a.seq ?? -1) ||
+    a.id.localeCompare(b.id)
+}
+
+function pageStart(entries: readonly UsageLedgerEntry[], cursor: string | undefined): number {
+  if (cursor === undefined) return 0
+  const marker = decodeCursor(cursor)
+  if (marker === undefined) return 0
+  const exact = entries.findIndex((entry) =>
+    entry.occurredAt === marker.occurredAt && entry.seq === marker.seq && entry.id === marker.id)
+  if (exact >= 0) return exact + 1
+  const next = entries.findIndex((entry) => compareEntries(entry, marker) > 0)
+  return next < 0 ? entries.length : next
+}
+
+function encodeCursor(entry: SortableUsageEntry): string {
+  return Buffer.from(JSON.stringify({ t: entry.occurredAt, s: entry.seq, i: entry.id }), "utf8").toString("base64url")
+}
+
+function decodeCursor(value: string): SortableUsageEntry | undefined {
+  try {
+    const parsed = JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as { t?: unknown; s?: unknown; i?: unknown }
+    if (!Number.isSafeInteger(parsed.t) || (parsed.s !== null && !Number.isSafeInteger(parsed.s)) || typeof parsed.i !== "string") return undefined
+    if ((parsed.t as number) < 0 || parsed.i.length === 0 || parsed.i.length > 512) return undefined
+    return { occurredAt: parsed.t as number, seq: parsed.s as number | null, id: parsed.i }
+  } catch { return undefined }
+}
+
+function cleanQueryString(value: unknown, maxLength: number): string | undefined {
+  if (typeof value !== "string") return undefined
+  const clean = value.trim()
+  return clean.length > 0 && clean.length <= maxLength && !/[\u0000-\u001f]/.test(clean) ? clean : undefined
+}
+
+function csvCell(value: string | number): string {
+  let text = String(value)
+  if (/^[=+\-@]/.test(text)) text = `'${text}`
+  return /[",\r\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text
 }
 
 function clampInteger(value: number, min: number, max: number): number {

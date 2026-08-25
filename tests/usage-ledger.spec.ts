@@ -111,6 +111,74 @@ test('Host backfill is revision-aware and legacy import stores only the uncovere
   await ledger.close()
 })
 
+test('Host query keeps complete aggregates while cursor pages and filters stay bounded', async () => {
+  const tables = new Map<string, MemoryTable<unknown>>()
+  const storageDomain: StorageDomainLike = {
+    async open() {
+      return {
+        table(name) {
+          let table = tables.get(name)
+          if (table === undefined) {
+            table = new MemoryTable()
+            tables.set(name, table)
+          }
+          return table
+        },
+        async close() {},
+      }
+    },
+  }
+  const header = { id: 'session-paged', createdAt: at }
+  const events: SessionEventLike[] = [
+    { seq: 0, time: at, type: 'request/context', data: { provider: 'openrouter', model: 'deepseek/deepseek-chat' } },
+    { seq: 1, time: at + 1, type: 'assistant/message', data: { turn: 0, step: 0, usage: usage(100, 10) } },
+    { seq: 2, time: at + 2, type: 'assistant/message', data: { turn: 0, step: 1, usage: usage(200, 20, 50) } },
+    { seq: 3, time: at + 3, type: 'assistant/message', data: { turn: 0, step: 2, usage: usage(300, 30, 70, 5) } },
+  ]
+  const ledger = await HostUsageLedger.open({
+    storageDomain,
+    sessions: { list: () => [] },
+    sessionPersistence: {
+      async listSnapshots() { return [{ header, revision: 'revision-paged' }] },
+      async inspect() { return { meta: header, events } },
+    },
+    resolveBillingProvider: () => 'openrouter',
+    retainedDays: 90,
+    now: () => at + 5_000,
+  })
+  await ledger.startBackfill()
+
+  const first = ledger.query({ limit: 2 })
+  assert.equal(first.entries.length, 2)
+  assert.equal(first.summary.calls, 3)
+  assert.equal(first.summary.sessionCount, 1)
+  assert.deepEqual(first.summary.tokens, {
+    uncachedInputTokens: 600,
+    cacheReadTokens: 120,
+    cacheWriteTokens: 5,
+    outputTokens: 60,
+  })
+  assert.equal(first.summary.buckets.length, 1)
+  assert.equal(first.hasMore, true)
+  assert.ok(first.nextCursor)
+
+  const second = ledger.query({ limit: 2, cursor: first.nextCursor ?? undefined })
+  assert.equal(second.entries.length, 1)
+  assert.equal(second.hasMore, false)
+  assert.equal(second.summary.calls, 3, 'the second page keeps the complete filtered summary')
+  assert.equal(new Set([...first.entries, ...second.entries].map((entry) => entry.id)).size, 3)
+
+  const filtered = ledger.query({ billingProvider: 'OPENROUTER', model: 'deepseek/deepseek-chat', search: 'session-paged' })
+  assert.equal(filtered.summary.calls, 3)
+  assert.equal(ledger.query({ billingProvider: 'minimax-cn' }).summary.calls, 0)
+
+  const csv = ledger.exportCsv({ billingProvider: 'openrouter' })
+  assert.ok(csv.startsWith('\uFEFFoccurred_at,session_id'))
+  assert.equal(csv.trim().split('\n').length, 4)
+  assert.match(csv, /deepseek\/deepseek-chat/)
+  await ledger.close()
+})
+
 class MemoryTable<V> {
   private readonly values = new Map<string, V>()
   get(key: string): V | undefined { return this.values.get(key) }

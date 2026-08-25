@@ -6,7 +6,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/Node.js-%3E%3D22-43853d.svg)](package.json)
 
-DSH Web 的多平台额度、余额、Token 成本与路由诊断中心。当前版本为 `0.6.0`。
+DSH Web 的多平台额度、余额、Token 成本与路由诊断中心。当前版本为 `0.6.1`。
 
 插件直接跟随 DeepSeek HARNESS 的当前 `Session` 和该会话的模型选择，区分“模型厂商”和“实际计费平台”。例如会话通过 OpenRouter 使用 MiniMax 模型时，额度仍归到 OpenRouter，不会误查 MiniMax。
 
@@ -17,15 +17,16 @@ DSH Web 的多平台额度、余额、Token 成本与路由诊断中心。当前
 - 跟随当前会话：订阅 DSH `sessions.currentProvideInfo`、`tokenUsage` projection 和会话级 `modelDirectories`。
 - 远端额度：统一展示余额、5 小时/周额度窗口、Key 消费限额与平台侧用量。
 - Host 用量账本：按每次模型调用持久化 Token，并从已有 Session 日志安全回填，无需恢复或运行 Agent。
-- 本地用量：按平台和模型统计当前会话、今日、近 30 天 Token 及估算费用。
+- 本地用量：按平台和模型统计当前会话、今日、近 30 天 Token 及估算费用；完整汇总不受明细分页条数影响。
 - 悬浮仪表盘：默认常驻显示当前平台、模型、会话 Token、估算费用与缓存命中；可拖动、折叠成图标或关闭，并记住位置。
 - 用量分析：展示连续 7 日趋势和近 30 天平台/模型拆分，空闲日期不会被压缩掉。
 - 可靠计数：同一 turn/step 的流式与最终 usage 采用覆盖语义，刷新页面、重启 Host 或切换模型不会重复计数。
 - 历史迁移：旧版浏览器汇总只导入 Session 日志未覆盖的差额，升级后历史不丢失也不重复。
-- 逐次明细：展示最近调用的模型、路由/计费平台、输入输出 Token、费用、时间和 turn/step。
+- 逐次明细：展示调用的模型、路由/计费平台、输入输出 Token、费用、时间和 turn/step，支持游标分页与加载更多。
+- 明细筛选：可按计费平台、精确模型、数据来源或关键字查询 Host 账本。
 - 模型价格：可直接在界面为任意模型设置人民币/百万 Token 价格；浏览器覆盖可随时恢复为 Host 配置。
 - 安全诊断：显示 route、计费平台、模型厂商、解析置信度和缓存状态，可复制不含凭据的诊断报告。
-- 数据导出：把本地 7 日趋势和 30 日模型拆分导出为 JSON。
+- 数据导出：可导出本地趋势/模型拆分 JSON，也可把全部筛选后的 Host 明细导出为 CSV。
 - 自动与固定模式：默认跟随会话，也可固定查看某个平台；固定查看不会修改会话模型。
 - 缓存与容错：GET 使用可配置 TTL，手动刷新强制请求；并发请求合并；失败时保留上一次健康快照。
 - 安全边界：凭据只在 Host 解析，响应递归脱敏；写请求要求 JSON；插件路由校验 Host、Origin 和 `Sec-Fetch-Site`。
@@ -63,14 +64,14 @@ DSH Web 的多平台额度、余额、Token 成本与路由诊断中心。当前
 推荐把预构建的 Release 安装到 DSH Web profile，然后重启 DSH Web：
 
 ```bash
-dsh plugin --profile web add "https://github.com/Lottle7/dsh-quota/releases/download/v0.6.0/dsh-quota.tgz"
+dsh plugin --profile web add "https://github.com/Lottle7/dsh-quota/releases/download/v0.6.1/dsh-quota.tgz"
 dsh web
 ```
 
 预构建包不需要在本机编译 TypeScript。也可以安装带版本的 GitHub 源码；pnpm 10 或更高版本若提示 `allowBuilds`，请按提示允许该包的构建脚本后重试：
 
 ```bash
-dsh plugin --profile web add "github:Lottle7/dsh-quota#v0.6.0"
+dsh plugin --profile web add "github:Lottle7/dsh-quota#v0.6.1"
 ```
 
 升级时把上述 Release URL 换成新版本；卸载使用：
@@ -103,7 +104,7 @@ dsh plugin --profile web add .
 ## 界面结构
 
 - **总览**：当前计费平台的余额/额度窗口，以及今日费用、Token、缓存命中和平台连接摘要。
-- **用量**：当前会话、今日、近 30 天、Host 历史同步、连续 7 日图表、平台/模型排行和逐次调用明细。
+- **用量**：当前会话、今日、近 30 天、Host 历史同步、连续 7 日图表、平台/模型排行、明细筛选/分页和 CSV 导出。
 - **平台**：查看 5 个原生查询平台和 6 个本地计费平台，并在不修改会话模型的前提下固定查看。
 - **设置**：切换悬浮迷你面板/图标/关闭并重置位置，编辑模型本地价格，检查路由解析链路，复制脱敏诊断和导出用量。
 

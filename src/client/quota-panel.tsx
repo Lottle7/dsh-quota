@@ -1,7 +1,13 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react"
 import type { ProviderListItem, QuotaSnapshot, QuotaStatus, QuotaWindow } from "../shared/types.ts"
 import type { PriceSet, PricingTable, TokenUsageTotals } from "../shared/usage.ts"
-import type { UsageBackfillState, UsageLedgerEntry } from "../shared/ledger.ts"
+import type {
+  UsageBackfillState,
+  UsageLedgerEntry,
+  UsageLedgerQuery,
+  UsageLedgerResponse,
+} from "../shared/ledger.ts"
+import { PLUGIN_VERSION } from "../shared/constants.ts"
 import type { Mode } from "./store.ts"
 import type { UsageAggregate, UsageBreakdownItem, UsageSeriesPoint } from "./usage-store.ts"
 import { formatCacheHitPercent, formatCount, formatCNY } from "./format.ts"
@@ -30,6 +36,8 @@ export interface QuotaPanelProps {
   usageSeries: UsageSeriesPoint[]
   usageBreakdown: UsageBreakdownItem[]
   usageEntries: UsageLedgerEntry[]
+  usageTotalCalls: number
+  usageNextCursor: string | null
   usageSessionCount: number
   usageRetainedDays: number
   usageBackfill: UsageBackfillState
@@ -46,6 +54,8 @@ export interface QuotaPanelProps {
   onSetMode(mode: Mode): void
   onRefresh(): void
   onSyncUsage(): Promise<void>
+  onQueryUsage(query: UsageLedgerQuery): Promise<UsageLedgerResponse>
+  onExportUsage(query: UsageLedgerQuery): Promise<Blob>
   onSavePrice(model: string, prices: PriceSet | null): void
   onSetFloatingMode(mode: FloatingMode): void
   onResetFloatingPosition(): void
@@ -122,11 +132,15 @@ export function QuotaPanel(props: QuotaPanelProps) {
               series={props.usageSeries}
               breakdown={props.usageBreakdown}
               entries={props.usageEntries}
+              totalCalls={props.usageTotalCalls}
+              nextCursor={props.usageNextCursor}
               sessionCount={props.usageSessionCount}
               retainedDays={props.usageRetainedDays}
               backfill={props.usageBackfill}
               pricing={props.pricing}
               onSync={props.onSyncUsage}
+              onQuery={props.onQueryUsage}
+              onExport={props.onExportUsage}
             />
           ) : null}
           {tab === "providers" ? <ProvidersView {...props} /> : null}
@@ -258,13 +272,41 @@ function UsageView(props: {
   series: UsageSeriesPoint[]
   breakdown: UsageBreakdownItem[]
   entries: UsageLedgerEntry[]
+  totalCalls: number
+  nextCursor: string | null
   sessionCount: number
   retainedDays: number
   backfill: UsageBackfillState
   pricing: PricingTable
   onSync(): Promise<void>
+  onQuery(query: UsageLedgerQuery): Promise<UsageLedgerResponse>
+  onExport(query: UsageLedgerQuery): Promise<Blob>
 }) {
   const [syncing, setSyncing] = useState(false)
+  const [ledgerEntries, setLedgerEntries] = useState(props.entries)
+  const [nextCursor, setNextCursor] = useState(props.nextCursor)
+  const [totalCalls, setTotalCalls] = useState(props.totalCalls)
+  const [provider, setProvider] = useState("")
+  const [model, setModel] = useState("")
+  const [search, setSearch] = useState("")
+  const [source, setSource] = useState<"" | UsageLedgerEntry["source"]>("")
+  const [activeQuery, setActiveQuery] = useState<UsageLedgerQuery>({})
+  const [querying, setQuerying] = useState(false)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const [exporting, setExporting] = useState(false)
+  const [ledgerError, setLedgerError] = useState<string | null>(null)
+  const [syncError, setSyncError] = useState<string | null>(null)
+  const providerOptions = [...new Set([
+    ...props.breakdown.map((item) => item.provider),
+    ...props.entries.map((entry) => entry.billingProvider),
+  ])].sort((left, right) => left.localeCompare(right))
+
+  useEffect(() => {
+    if (hasUsageFilters(activeQuery)) return
+    setLedgerEntries(props.entries)
+    setNextCursor(props.nextCursor)
+    setTotalCalls(props.totalCalls)
+  }, [activeQuery, props.entries, props.nextCursor, props.totalCalls])
   const input = props.tokens.uncachedInputTokens + props.tokens.cacheReadTokens + props.tokens.cacheWriteTokens
   const any = input + props.tokens.outputTokens > 0
   const currentPrice = props.model === null ? null : resolvePriceAt(props.model, props.pricing, Date.now()).prices
@@ -272,7 +314,59 @@ function UsageView(props: {
   const currentCost = currentPrice === null ? 0 : computeDeltaCost(props.tokens, currentPrice)
   const synchronize = (): void => {
     setSyncing(true)
-    void props.onSync().catch(() => undefined).finally(() => setSyncing(false))
+    setSyncError(null)
+    void props.onSync()
+      .catch((error: unknown) => setSyncError(String(error instanceof Error ? error.message : error)))
+      .finally(() => setSyncing(false))
+  }
+  const filterQuery = (): UsageLedgerQuery => ({
+    ...(provider.trim().length > 0 ? { billingProvider: provider.trim() } : {}),
+    ...(model.trim().length > 0 ? { model: model.trim() } : {}),
+    ...(search.trim().length > 0 ? { search: search.trim() } : {}),
+    ...(source !== "" ? { source } : {}),
+  })
+  const replacePage = async (query: UsageLedgerQuery): Promise<void> => {
+    setQuerying(true)
+    setLedgerError(null)
+    try {
+      const page = await props.onQuery({ ...query, limit: 30 })
+      setActiveQuery(query)
+      setLedgerEntries(page.entries)
+      setNextCursor(page.nextCursor)
+      setTotalCalls(page.summary.calls)
+    } catch (error) {
+      setLedgerError(String(error instanceof Error ? error.message : error))
+    } finally {
+      setQuerying(false)
+    }
+  }
+  const resetFilters = (): void => {
+    setProvider("")
+    setModel("")
+    setSearch("")
+    setSource("")
+    void replacePage({})
+  }
+  const loadMore = (): void => {
+    if (nextCursor === null || loadingMore) return
+    setLoadingMore(true)
+    setLedgerError(null)
+    void props.onQuery({ ...activeQuery, limit: 30, cursor: nextCursor })
+      .then((page) => {
+        setLedgerEntries((current) => mergeLedgerEntries(current, page.entries))
+        setNextCursor(page.nextCursor)
+        setTotalCalls(page.summary.calls)
+      })
+      .catch((error: unknown) => setLedgerError(String(error instanceof Error ? error.message : error)))
+      .finally(() => setLoadingMore(false))
+  }
+  const exportCsv = (): void => {
+    setExporting(true)
+    setLedgerError(null)
+    void props.onExport(activeQuery)
+      .then((blob) => downloadBlob(blob, `dsh-quota-usage-${new Date().toISOString().slice(0, 10)}.csv`))
+      .catch((error: unknown) => setLedgerError(String(error instanceof Error ? error.message : error)))
+      .finally(() => setExporting(false))
   }
   return (
     <div className="dsh-quota-view dsh-quota-usage-view">
@@ -288,6 +382,7 @@ function UsageView(props: {
             : copy(props.locale, "同步历史", "Sync history")}
         </button>
       </section>
+      {syncError !== null ? <p className="dsh-quota-ledger-error">{syncError}</p> : null}
       <PanelSection title={t(props.locale, "thisConversation")} subtitle={props.model ?? undefined}>
         <MetricGrid items={[
           [t(props.locale, "input"), formatCount(input)],
@@ -307,9 +402,51 @@ function UsageView(props: {
       </PanelSection>
       <PanelSection
         title={copy(props.locale, "逐次调用", "Recent calls")}
-        subtitle={copy(props.locale, `最近 ${Math.min(30, props.entries.length)} 条`, `Latest ${Math.min(30, props.entries.length)}`)}
+        subtitle={copy(props.locale, `显示 ${ledgerEntries.length}/${totalCalls} 条`, `Showing ${ledgerEntries.length}/${totalCalls}`)}
       >
-        <UsageLedgerList entries={props.entries} pricing={props.pricing} locale={props.locale} />
+        <form
+          className="dsh-quota-ledger-tools"
+          onSubmit={(event) => { event.preventDefault(); void replacePage(filterQuery()) }}
+        >
+          <div className="dsh-quota-ledger-filter-grid">
+            <label>
+              <span>{copy(props.locale, "平台", "Provider")}</span>
+              <select value={provider} onChange={(event) => setProvider(event.target.value)}>
+                <option value="">{copy(props.locale, "全部平台", "All providers")}</option>
+                {providerOptions.map((item) => <option value={item} key={item}>{item}</option>)}
+              </select>
+            </label>
+            <label>
+              <span>{copy(props.locale, "模型", "Model")}</span>
+              <input value={model} onChange={(event) => setModel(event.target.value)} placeholder={copy(props.locale, "精确模型名", "Exact model name")} />
+            </label>
+            <label>
+              <span>{copy(props.locale, "搜索", "Search")}</span>
+              <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={copy(props.locale, "会话 / 路由 / 模型", "Session / route / model")} />
+            </label>
+            <label>
+              <span>{copy(props.locale, "来源", "Source")}</span>
+              <select value={source} onChange={(event) => setSource(event.target.value as "" | UsageLedgerEntry["source"])}>
+                <option value="">{copy(props.locale, "全部来源", "All sources")}</option>
+                <option value="session-log">{copy(props.locale, "会话日志", "Session log")}</option>
+                <option value="browser-migration">{copy(props.locale, "旧版迁移", "Legacy migration")}</option>
+              </select>
+            </label>
+          </div>
+          <div className="dsh-quota-ledger-actions">
+            <span>{copy(props.locale, `共 ${totalCalls} 次调用`, `${totalCalls} calls`)}</span>
+            <button type="button" className="dsh-quota-secondary-button" onClick={resetFilters} disabled={querying}>{copy(props.locale, "重置", "Reset")}</button>
+            <button type="submit" className="dsh-quota-secondary-button" disabled={querying}>{querying ? copy(props.locale, "查询中…", "Filtering…") : copy(props.locale, "应用筛选", "Apply filters")}</button>
+            <button type="button" className="dsh-quota-primary-button" onClick={exportCsv} disabled={exporting}>{exporting ? copy(props.locale, "导出中…", "Exporting…") : copy(props.locale, "导出 CSV", "Export CSV")}</button>
+          </div>
+        </form>
+        {ledgerError !== null ? <p className="dsh-quota-ledger-error">{ledgerError}</p> : null}
+        <UsageLedgerList entries={ledgerEntries} pricing={props.pricing} locale={props.locale} />
+        {nextCursor !== null ? (
+          <button type="button" className="dsh-quota-ledger-more" onClick={loadMore} disabled={loadingMore}>
+            {loadingMore ? copy(props.locale, "加载中…", "Loading…") : copy(props.locale, "加载更多", "Load more")}
+          </button>
+        ) : null}
       </PanelSection>
       {props.snapshot?.usage !== undefined ? <ProviderUsage snapshot={props.snapshot} locale={props.locale} /> : null}
       <p className="dsh-quota-privacy-note"><ShieldIcon />{t(props.locale, "costEstimate")}</p>
@@ -318,7 +455,7 @@ function UsageView(props: {
 }
 
 function UsageLedgerList({ entries, pricing, locale }: { entries: UsageLedgerEntry[]; pricing: PricingTable; locale: Locale }) {
-  const visible = entries.filter((entry) => tokenTotal(entry.tokens) > 0).slice(0, 30)
+  const visible = entries.filter((entry) => tokenTotal(entry.tokens) > 0)
   if (visible.length === 0) return <p className="dsh-quota-section-hint">{t(locale, "usageEmpty")}</p>
   return (
     <div className="dsh-quota-ledger-list">
@@ -354,6 +491,28 @@ function UsageLedgerList({ entries, pricing, locale }: { entries: UsageLedgerEnt
       })}
     </div>
   )
+}
+
+function hasUsageFilters(query: UsageLedgerQuery): boolean {
+  return query.billingProvider !== undefined
+    || query.model !== undefined
+    || query.sessionId !== undefined
+    || query.source !== undefined
+    || query.search !== undefined
+}
+
+function mergeLedgerEntries(current: UsageLedgerEntry[], incoming: UsageLedgerEntry[]): UsageLedgerEntry[] {
+  const ids = new Set(current.map((entry) => entry.id))
+  return [...current, ...incoming.filter((entry) => !ids.has(entry.id))]
+}
+
+function downloadBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement("a")
+  link.href = url
+  link.download = filename
+  link.click()
+  setTimeout(() => URL.revokeObjectURL(url), 0)
 }
 
 function ledgerStatusText(locale: Locale, state: UsageBackfillState, sessions: number, retainedDays: number): string {
@@ -583,7 +742,7 @@ function DiagnosticRow({ label, value }: { label: string; value: string }) {
 async function copyDiagnostics(props: QuotaPanelProps, setFeedback: (value: string) => void): Promise<void> {
   const report = {
     plugin: "dsh-quota",
-    version: "0.5.1",
+    version: PLUGIN_VERSION,
     generatedAt: new Date().toISOString(),
     mode: props.mode,
     route: props.currentRouteProvider,

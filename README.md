@@ -18,14 +18,14 @@ Multi-provider quota, balance, and Token-cost dashboard for **DeepSeek Harness (
 Install the prebuilt release into the DSH Web profile, then restart DSH Web:
 
 ```bash
-dsh plugin --profile web add "https://github.com/Lottle7/dsh-quota/releases/download/v0.6.0/dsh-quota.tgz"
+dsh plugin --profile web add "https://github.com/Lottle7/dsh-quota/releases/download/v0.6.1/dsh-quota.tgz"
 dsh web
 ```
 
 The prebuilt archive does not require a local TypeScript build. To install the tagged source instead, use the command below and follow pnpm's `allowBuilds` prompt if pnpm 10 or later asks for it:
 
 ```bash
-dsh plugin --profile web add "github:Lottle7/dsh-quota#v0.6.0"
+dsh plugin --profile web add "github:Lottle7/dsh-quota#v0.6.1"
 ```
 
 ## Highlights
@@ -33,11 +33,12 @@ dsh plugin --profile web add "github:Lottle7/dsh-quota#v0.6.0"
 - Follows the active Session's route, model, reasoning effort, and official `tokenUsage` projection.
 - Shows the provider's balance, quota windows, key spending limit, and provider-side usage when its API exposes them.
 - Persists a deduplicated per-call usage ledger in DSH Host storage and backfills existing Session logs without resuming Agents.
-- Tracks current-Session, daily, and rolling 30-day Tokens and estimated CNY cost by billing platform and model.
+- Tracks current-Session, daily, and rolling 30-day Tokens and estimated CNY cost by billing platform and model, using complete Host aggregates independently of history-page size.
 - Keeps a draggable mini dashboard visible while you work; switch it to icon-only mode, hide it, or reset its position.
 - Migrates the pre-v0.6 browser aggregates as uncovered remainders, so upgrades preserve history without double-counting Session logs.
-- Shows historical-sync progress and the latest call-level model, route, Token, cost, time, turn, and step details.
-- Displays a gap-free seven-day trend and a 30-day provider/model breakdown, with JSON export.
+- Shows historical-sync progress and pageable call-level model, route, Token, cost, time, turn, and step details.
+- Filters call history by billing provider, exact model, source or search text, and exports every matching row as CSV.
+- Displays a gap-free seven-day trend and a 30-day provider/model breakdown, with summary JSON export.
 - Lets you edit per-model CNY-per-million-Token prices in the browser and restore Host defaults at any time.
 - Explains route resolution, billing provider, model vendor, confidence, and cache state in a credential-free diagnostic report.
 - Supports desktop drawers, a responsive mobile bottom sheet, light/dark themes, and Chinese/English UI copy.
@@ -70,7 +71,7 @@ Local-accounting integrations never invent a balance. They report only the Token
 ## Interface
 
 - **Overview** — active billing-platform balance/quota, today's Token cost and connection summary.
-- **Usage** — Session, today and 30-day totals, Host history sync, seven-day chart, provider/model rankings, and recent call details.
+- **Usage** — Session, today and 30-day totals, Host history sync, seven-day chart, provider/model rankings, filtered call history, pagination, and CSV export.
 - **Providers** — inspect all 11 integrations or pin one for viewing without changing the Session model.
 - **Settings** — control the floating widget, edit local prices, inspect route resolution, copy diagnostics, and export usage.
 

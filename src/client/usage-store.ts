@@ -17,7 +17,7 @@ import type {
   UsageDay,
   UsageDayModelBucket,
 } from "../shared/usage.ts"
-import type { LegacyUsageImportRow, UsageLedgerEntry } from "../shared/ledger.ts"
+import type { LegacyUsageImportRow, UsageLedgerEntry, UsageSummaryBucket } from "../shared/ledger.ts"
 import {
   USAGE_STORAGE_KEY,
   USAGE_HISTORY_DAYS,
@@ -424,17 +424,27 @@ export class UsageStore {
 
   /** Replace the browser mirror with the Host's durable per-step ledger. */
   replaceFromLedger(entries: readonly UsageLedgerEntry[]): void {
+    this.replaceFromSummary(entries.map((entry) => ({
+      date: localDateString(entry.occurredAt),
+      billingProvider: entry.billingProvider,
+      model: entry.model,
+      calls: 1,
+      tokens: entry.tokens,
+    })))
+  }
+
+  /** Replace the mirror from complete Host aggregates, independent of page size. */
+  replaceFromSummary(buckets: readonly UsageSummaryBucket[]): void {
     const byDate = new Map<string, UsageDay>()
-    for (const entry of entries) {
-      const date = localDateString(entry.occurredAt)
-      let day = byDate.get(date)
+    for (const summary of buckets) {
+      let day = byDate.get(summary.date)
       if (day === undefined) {
-        day = { date, byModel: {} }
-        byDate.set(date, day)
+        day = { date: summary.date, byModel: {} }
+        byDate.set(summary.date, day)
       }
-      const key = bucketKey(entry.billingProvider, entry.model)
+      const key = bucketKey(summary.billingProvider, summary.model)
       const bucket = day.byModel[key] ?? emptyBucket()
-      const merged = addUsage(bucket, entry.tokens)
+      const merged = addUsage(bucket, summary.tokens)
       bucket.uncachedInputTokens = merged.uncachedInputTokens
       bucket.cacheReadTokens = merged.cacheReadTokens
       bucket.cacheWriteTokens = merged.cacheWriteTokens

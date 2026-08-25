@@ -38,6 +38,25 @@ function makeApi(overrides?: (calls: string[]) => Partial<QuotaApi>): { api: Quo
       calls.push('settings')
       return { pricing: EMPTY_PRICING }
     },
+    async getUsage() {
+      return {
+        entries: [],
+        nextCursor: null,
+        hasMore: false,
+        summary: {
+          calls: 0,
+          sessionCount: 0,
+          tokens: { uncachedInputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 0 },
+          buckets: [],
+        },
+        sessionCount: 0,
+        retainedDays: 90,
+        backfill: { status: 'ready', scanned: 0, total: 0, lastCompletedAt: Date.now() },
+      }
+    },
+    async exportUsageCsv() { return new Blob() },
+    async importLegacyUsage() { return { accepted: 0, stored: 0, coveredBySessionHistory: 0 } },
+    async backfillUsage() {},
     ...(overrides?.(calls) ?? {}),
   }
   return { api, calls }
@@ -92,4 +111,26 @@ test('older Host settings responses keep safe client defaults', () => {
   assert.equal(state.refreshIntervalMs, 60_000)
   assert.equal(state.warningBalanceBelow, 10)
   assert.equal(state.warningQuotaRemainingBelow, 0.2)
+})
+
+test('applyLedger exposes complete call totals and the next cursor', () => {
+  const { api } = makeApi()
+  const store = createQuotaStore(api)
+  store.actions.applyLedger({
+    entries: [],
+    nextCursor: 'cursor-2',
+    hasMore: true,
+    summary: {
+      calls: 1428,
+      sessionCount: 10,
+      tokens: { uncachedInputTokens: 456_000, cacheReadTokens: 100_000, cacheWriteTokens: 0, outputTokens: 5_300 },
+      buckets: [],
+    },
+    sessionCount: 10,
+    retainedDays: 90,
+    backfill: { status: 'ready', scanned: 11, total: 11, lastCompletedAt: Date.now() },
+  })
+  assert.equal(store.getSnapshot().usageTotalCalls, 1428)
+  assert.equal(store.getSnapshot().usageNextCursor, 'cursor-2')
+  assert.equal(store.getSnapshot().usageSessionCount, 10)
 })

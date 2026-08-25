@@ -161,6 +161,7 @@ export const RPC_PATHS = {
   getUsage: "/api/dsh-quota/usage",
   importUsage: "/api/dsh-quota/usage/import",
   backfillUsage: "/api/dsh-quota/usage/backfill",
+  exportUsage: "/api/dsh-quota/usage/export",
 } as const
 
 /** Response of `/api/dsh-quota/settings`. Carries the pricing table the

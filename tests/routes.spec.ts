@@ -64,7 +64,7 @@ function request(url: string, method = 'GET', headers: Record<string, string> = 
   return { url, method, headers } as IncomingMessage
 }
 
-function response(): ServerResponse & { statusCodeSeen: number; json(): unknown } {
+function response(): ServerResponse & { statusCodeSeen: number; json(): unknown; text(): string; header(name: string): string | undefined } {
   let statusCodeSeen = 0
   let body = ''
   const headers: Record<string, string> = {}
@@ -78,7 +78,9 @@ function response(): ServerResponse & { statusCodeSeen: number; json(): unknown 
     },
     end(value?: string) { body = value ?? ''; return this },
     json() { return JSON.parse(body) as unknown },
-  } as unknown as ServerResponse & { statusCodeSeen: number; json(): unknown }
+    text() { return body },
+    header(name: string) { return headers[name.toLowerCase()] },
+  } as unknown as ServerResponse & { statusCodeSeen: number; json(): unknown; text(): string; header(name: string): string | undefined }
 }
 
 function handlerFor(enabled = true) {
@@ -177,11 +179,26 @@ test('usage route preserves numeric token buckets instead of credential-redactin
             tokens: { uncachedInputTokens: 123, cacheReadTokens: 45, cacheWriteTokens: 6, outputTokens: 78 },
             source: 'session-log' as const,
           }],
+          nextCursor: null,
+          hasMore: false,
+          summary: {
+            calls: 1,
+            sessionCount: 1,
+            tokens: { uncachedInputTokens: 123, cacheReadTokens: 45, cacheWriteTokens: 6, outputTokens: 78 },
+            buckets: [{
+              date: '2026-08-25',
+              billingProvider: 'openrouter',
+              model: 'deepseek/deepseek-chat',
+              calls: 1,
+              tokens: { uncachedInputTokens: 123, cacheReadTokens: 45, cacheWriteTokens: 6, outputTokens: 78 },
+            }],
+          },
           sessionCount: 1,
           retainedDays: 90,
           backfill: { status: 'ready' as const, scanned: 1, total: 1, lastCompletedAt: Date.now() },
         }
       },
+      exportCsv() { return '\uFEFFoccurred_at,session_id\n2026-08-25T00:00:00.000Z,session-1\n' },
       async importLegacy() { return { accepted: 0, stored: 0, coveredBySessionHistory: 0 } },
       async startBackfill() {},
     },
@@ -194,4 +211,38 @@ test('usage route preserves numeric token buckets instead of credential-redactin
   assert.equal(res.statusCodeSeen, 200)
   assert.equal(body.entries[0]?.id, 'session-1:0:0')
   assert.equal(body.entries[0]?.tokens.uncachedInputTokens, 123)
+})
+
+test('CSV export route forwards filters and returns a downloadable no-store response', async () => {
+  const data = fixture()
+  let received: unknown
+  const routes = makeQuotaRoutes({
+    registry: data.registry,
+    service: data.service,
+    usageLedger: {
+      query() { throw new Error('not used') },
+      exportCsv(query) {
+        received = query
+        return '\uFEFFoccurred_at,session_id\n2026-08-25T00:00:00.000Z,session-1\n'
+      },
+      async importLegacy() { return { accepted: 0, stored: 0, coveredBySessionHistory: 0 } },
+      async startBackfill() {},
+    },
+  }).routes
+  const route = routes.find((item) => item.path === RPC_PATHS.exportUsage)
+  assert.ok(route)
+  const res = response()
+  await route.handler(request(`${RPC_PATHS.exportUsage}?provider=openrouter&model=deepseek%2Fdeepseek-chat&source=session-log&limit=77`), res)
+  assert.equal(res.statusCodeSeen, 200)
+  assert.match(res.header('content-type') ?? '', /^text\/csv/)
+  assert.match(res.header('content-disposition') ?? '', /attachment/)
+  assert.equal(res.header('cache-control'), 'no-store')
+  assert.ok(res.text().startsWith('\uFEFFoccurred_at'))
+  assert.deepEqual(received, {
+    days: 30,
+    limit: 77,
+    billingProvider: 'openrouter',
+    model: 'deepseek/deepseek-chat',
+    source: 'session-log',
+  })
 })

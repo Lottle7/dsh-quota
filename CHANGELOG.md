@@ -3,6 +3,24 @@
 All notable changes to this project are documented in this file. The project
 follows [Semantic Versioning](https://semver.org/).
 
+## [0.6.1] - 2026-08-25
+
+### Added
+
+- Cursor-based call history with bounded pages and a load-more flow.
+- Provider, exact-model, source and free-text filters for the Host usage ledger.
+- Full filtered CSV export with spreadsheet-formula injection protection.
+- Complete Host-side daily/provider/model summary buckets returned independently of list pagination.
+
+### Changed
+
+- Dashboard totals, charts and breakdowns now use the complete Host aggregate instead of only the first page of call rows.
+- Recent-call status shows visible versus total matching calls and reports sync/filter/export failures inline.
+
+### Fixed
+
+- Safe diagnostics now report the package version from a shared version constant.
+
 ## [0.6.0] - 2026-08-25
 
 ### Added

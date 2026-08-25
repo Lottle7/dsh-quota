@@ -45,6 +45,8 @@ export interface QuotaState {
   usageSeries: UsageSeriesPoint[]
   usageBreakdown: UsageBreakdownItem[]
   usageEntries: UsageLedgerEntry[]
+  usageTotalCalls: number
+  usageNextCursor: string | null
   usageSessionCount: number
   usageRetainedDays: number
   usageBackfill: UsageBackfillState
@@ -122,6 +124,8 @@ export function createQuotaStore(api: QuotaApi, preferences?: Partial<QuotaPrefe
     usageSeries: [],
     usageBreakdown: [],
     usageEntries: [],
+    usageTotalCalls: 0,
+    usageNextCursor: null,
     usageSessionCount: 0,
     usageRetainedDays: 90,
     usageBackfill: { status: "idle", scanned: 0, total: 0, lastCompletedAt: null },
@@ -228,7 +232,9 @@ export function createQuotaStore(api: QuotaApi, preferences?: Partial<QuotaPrefe
       state = {
         ...state,
         usageEntries: [...payload.entries],
-        usageSessionCount: payload.sessionCount,
+        usageTotalCalls: payload.summary.calls,
+        usageNextCursor: payload.nextCursor,
+        usageSessionCount: payload.summary.sessionCount,
         usageRetainedDays: payload.retainedDays,
         usageBackfill: { ...payload.backfill },
       }

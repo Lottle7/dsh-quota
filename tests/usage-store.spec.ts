@@ -363,6 +363,25 @@ test('Host ledger replaces the local mirror and can be exported for compatibilit
   store.dispose()
 })
 
+test('Host summary replaces the mirror with totals independent of the visible ledger page', () => {
+  const storage = new MemoryStorage()
+  const now = Date.now()
+  const store = new UsageStore({ storage, now: nowReturning(now), pricing: OFF_PEAK, reconcileIntervalMs: 0 })
+  store.replaceFromSummary([{
+    date: localDateString(now),
+    billingProvider: 'openrouter',
+    model: 'deepseek/deepseek-chat',
+    calls: 42,
+    tokens: { uncachedInputTokens: 4_200, cacheReadTokens: 900, cacheWriteTokens: 100, outputTokens: 700 },
+  }])
+  const rows = aggregateBreakdown(store.getState(), OFF_PEAK, nowReturning(now))
+  assert.equal(rows[0]?.provider, 'openrouter')
+  assert.equal(rows[0]?.aggregate.inCacheMiss, 4_200)
+  assert.equal(rows[0]?.aggregate.inCacheHit, 900)
+  assert.equal(rows[0]?.aggregate.out, 700)
+  store.dispose()
+})
+
 test('UsageStore survives a corrupt localStorage value', () => {
   const storage = new MemoryStorage()
   storage.data = 'not json {{'
