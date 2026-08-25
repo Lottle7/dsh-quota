@@ -1,0 +1,10 @@
+# dsh-quota bundle patch: inserts the row into the web plugin roster.
+# The bundle is the official dsh plugin shape — install it into a dsh profile
+# (pnpm add link:... from inside ~/.dsh/profiles/web, or pnpm add dsh-quota).
+# The single row mounts BOTH halves: the Host-side provider registry, route
+# resolver, cache and adapters, plus the browser-side compact indicator and
+# quota center. The client follows the actual current Session model selection.
+# Secrets stay on the Host; the browser only receives normalized snapshots.
+- insert:
+    - id: dsh-quota
+      name: 'dsh-quota'

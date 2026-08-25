@@ -1,0 +1,39 @@
+name: Bug report
+description: Report a reproducible dsh-quota problem
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: dsh-quota, DSH and Node.js versions
+      placeholder: dsh-quota 0.4.0; DSH 0.1.x; Node 24.x
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Area
+      options: [Startup, Sidebar entry, Quota API, Token usage, Pricing, UI, Other]
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction
+      description: Remove all credentials and private Session content.
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Safe diagnostics
+      description: Paste the report copied from Quota center → Settings. Never paste API keys or cookies.
+      render: json
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+    validations:
+      required: true

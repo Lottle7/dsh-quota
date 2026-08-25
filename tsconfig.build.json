@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "allowImportingTsExtensions": false,
+    "declaration": true,
+    "emitDeclarationOnly": false
+  },
+  "exclude": [
+    "tests",
+    "node_modules",
+    "lib",
+    "src/types/**/*"
+  ]
+}
