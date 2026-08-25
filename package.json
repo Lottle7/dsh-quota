@@ -1,7 +1,7 @@
 {
   "name": "dsh-quota",
-  "version": "0.5.0",
-  "description": "Quota, balance, token analytics, pricing and route diagnostics for DeepSeek HARNESS Web.",
+  "version": "0.5.1",
+  "description": "Multi-provider quota, balance and Token-cost dashboard for DeepSeek Harness Web, with a draggable widget, usage analytics, local pricing and route diagnostics.",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
@@ -13,6 +13,7 @@
       "types": "./lib/client.d.ts",
       "default": "./lib/client.js"
     },
+    "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json"
   },
   "dsh": {
@@ -42,10 +43,16 @@
     "deepseek",
     "deepseek-harness",
     "dsh",
+    "dsh-plugin",
     "llm",
     "quota",
+    "quota-monitor",
     "token-usage",
-    "cost-monitoring"
+    "cost-monitoring",
+    "cost-tracking",
+    "multi-provider",
+    "openrouter",
+    "minimax"
   ],
   "engines": {
     "node": ">=22"
@@ -58,6 +65,7 @@
     "lib",
     "cordis.patch.yml",
     "README.md",
+    "README.zh.md",
     "CHANGELOG.md",
     "docs/assets/quota-center.png"
   ],
@@ -67,11 +75,13 @@
     "test": "node --import tsx/esm --test tests/*.spec.ts",
     "test:loader": "npm run build && node tests/client-loader-smoke.mjs",
     "test:ci": "npm run typecheck && npm test && npm run test:loader",
-    "prepack": "npm run build",
+    "prepare": "npm run build",
     "clean": "node -e \"require('node:fs').rmSync('lib', { recursive: true, force: true })\""
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "4.0.1",
+    "@deepseek-ai/dsh-settings": "0.1.0-rc.6",
+    "@deepseek-ai/schemastery": "3.18.1",
     "@types/node": "^22.10.0",
     "@types/react": "~18.3.5",
     "react": "^18.3.1",
@@ -79,14 +89,12 @@
     "tsx": "^4.19.0",
     "typescript": "^5.7.2"
   },
-  "dependencies": {
-    "@deepseek-ai/dsh-settings": "0.1.0-rc.6",
-    "@deepseek-ai/schemastery": "3.18.1"
-  },
   "peerDependencies": {
     "@deepseek-ai/cordis": "4.0.1",
     "@deepseek-ai/dsh-brand": "0.1.0-rc.6",
-    "@deepseek-ai/dsh-invariants": "0.1.0-rc.6"
+    "@deepseek-ai/dsh-invariants": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-settings": "0.1.0-rc.6",
+    "@deepseek-ai/schemastery": "3.18.1"
   },
   "overrides": {
     "@deepseek-ai/dsh-brand": "0.1.0-rc.6",

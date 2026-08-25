@@ -474,7 +474,7 @@ function DiagnosticRow({ label, value }: { label: string; value: string }) {
 async function copyDiagnostics(props: QuotaPanelProps, setFeedback: (value: string) => void): Promise<void> {
   const report = {
     plugin: "dsh-quota",
-    version: "0.5.0",
+    version: "0.5.1",
     generatedAt: new Date().toISOString(),
     mode: props.mode,
     route: props.currentRouteProvider,
