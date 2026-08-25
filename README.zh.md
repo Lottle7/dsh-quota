@@ -1,0 +1,200 @@
+# dsh-quota
+
+[English](README.md) | 简体中文
+
+[![CI](https://github.com/Lottle7/dsh-quota/actions/workflows/ci.yml/badge.svg)](https://github.com/Lottle7/dsh-quota/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Node.js](https://img.shields.io/badge/Node.js-%3E%3D22-43853d.svg)](package.json)
+
+DSH Web 的多平台额度、余额、Token 成本与路由诊断中心。当前版本为 `0.5.1`。
+
+插件直接跟随 DeepSeek HARNESS 的当前 `Session` 和该会话的模型选择，区分“模型厂商”和“实际计费平台”。例如会话通过 OpenRouter 使用 MiniMax 模型时，额度仍归到 OpenRouter，不会误查 MiniMax。
+
+![dsh-quota 额度中心](docs/assets/quota-center.png)
+
+## 当前能力
+
+- 跟随当前会话：订阅 DSH `sessions.currentProvideInfo`、`tokenUsage` projection 和会话级 `modelDirectories`。
+- 远端额度：统一展示余额、5 小时/周额度窗口、Key 消费限额与平台侧用量。
+- 本地用量：按平台和模型统计当前会话、今日、近 30 天 Token 及估算费用。
+- 悬浮仪表盘：默认常驻显示当前平台、模型、会话 Token、估算费用与缓存命中；可拖动、折叠成图标或关闭，并记住位置。
+- 用量分析：展示连续 7 日趋势和近 30 天平台/模型拆分，空闲日期不会被压缩掉。
+- 可靠计数：持久化每个 Session 的累计 Token 基线，刷新页面或切换模型不会重复计费。
+- 模型价格：可直接在界面为任意模型设置人民币/百万 Token 价格；浏览器覆盖可随时恢复为 Host 配置。
+- 安全诊断：显示 route、计费平台、模型厂商、解析置信度和缓存状态，可复制不含凭据的诊断报告。
+- 数据导出：把本地 7 日趋势和 30 日模型拆分导出为 JSON。
+- 自动与固定模式：默认跟随会话，也可固定查看某个平台；固定查看不会修改会话模型。
+- 缓存与容错：GET 使用可配置 TTL，手动刷新强制请求；并发请求合并；失败时保留上一次健康快照。
+- 安全边界：凭据只在 Host 解析，响应递归脱敏；写请求要求 JSON；插件路由校验 Host、Origin 和 `Sec-Fetch-Site`。
+- 中英文界面：侧边栏状态入口、总览/用量/平台/设置四个页签、桌面抽屉、移动端底部面板和深浅色适配。
+
+## 支持的平台（11 个）
+
+原生账户查询：
+
+| 平台 ID | 展示内容 | Host 凭据 |
+|---|---|---|
+| `minimax-cn` | MiniMax 国内 Coding Plan 额度窗口 | `MINIMAX_CN_API_KEY` / `MINIMAX_CN_COOKIE`，并兼容通用名称 |
+| `minimax-intl` | MiniMax 国际 Coding Plan 额度窗口 | `MINIMAX_INTL_API_KEY` / `MINIMAX_INTL_COOKIE`，并兼容通用名称 |
+| `deepseek-official` | DeepSeek 官方多币种账户余额 | `DEEPSEEK_API_KEY` |
+| `openrouter` | 当前 Key 用量、消费限额、剩余额度和重置周期 | `OPENROUTER_API_KEY` 或 `OPENROUTER_KEY` |
+| `siliconflow` | SiliconFlow 充值余额、赠送余额和总余额 | `SILICONFLOW_API_KEY` 或 `SILICONFLOW_KEY` |
+
+上表只列有可验证账户/Key 查询接口的平台。新增平台可通过实现一个 `QuotaAdapter` 并注册元数据接入，无需修改 UI 和路由主流程。
+
+本地 Token/费用归集（不请求平台账户接口、不需要额外凭据）：
+
+| 平台 ID | 路由别名示例 | 展示内容 |
+|---|---|---|
+| `moonshot` | `moonshot`、`kimi` | DSH Token、价格和费用趋势 |
+| `zhipu` | `zhipu`、`bigmodel`、`glm` | DSH Token、价格和费用趋势 |
+| `alibaba-bailian` | `dashscope`、`bailian` | DSH Token、价格和费用趋势 |
+| `volcengine-ark` | `volcengine`、`ark`、`doubao` | DSH Token、价格和费用趋势 |
+| `together` | `together`、`together-ai` | DSH Token、价格和费用趋势 |
+| `fireworks` | `fireworks`、`fireworks-ai` | DSH Token、价格和费用趋势 |
+
+这六个平台不是假余额占位：插件明确标记为“本地计费”，只根据 DSH 的实际 Token projection 和用户价格表统计。未来只有在平台提供稳定、官方、可由 API Key 调用的账户端点后，才会升级为原生余额/额度查询。
+
+## 安装
+
+推荐把预构建的 Release 安装到 DSH Web profile，然后重启 DSH Web：
+
+```bash
+dsh plugin --profile web add "https://github.com/Lottle7/dsh-quota/releases/download/v0.5.1/dsh-quota.tgz"
+dsh web
+```
+
+预构建包不需要在本机编译 TypeScript。也可以安装带版本的 GitHub 源码；pnpm 10 或更高版本若提示 `allowBuilds`，请按提示允许该包的构建脚本后重试：
+
+```bash
+dsh plugin --profile web add "github:Lottle7/dsh-quota#v0.5.1"
+```
+
+升级时把上述 Release URL 换成新版本；卸载使用：
+
+```bash
+dsh plugin --profile web remove dsh-quota
+```
+
+添加、升级或移除 Bundle 后都需要重启 `dsh web`。
+
+## 本地开发
+
+在插件目录构建并验证：
+
+```bash
+npm install
+npm run typecheck
+npm test
+npm run test:loader
+```
+
+从仓库根目录把本地 checkout 链接到 Web profile：
+
+```bash
+dsh plugin --profile web add .
+```
+
+包内 `cordis.patch.yml` 会插入 `dsh-quota` 行；客户端声明并注入会话、布局、侧边栏和模型选择所需的 DSH client bundles。修改后重新构建并重启 `dsh web`。悬浮迷你仪表盘默认开启，额度入口也保留在侧边栏底部；绿色、黄色和红色状态点分别表示健康、需要关注和失败状态。
+
+## 界面结构
+
+- **总览**：当前计费平台的余额/额度窗口，以及今日费用、Token、缓存命中和平台连接摘要。
+- **用量**：当前会话、今日、近 30 天、连续 7 日图表，以及按计费平台和模型拆分的排行榜。
+- **平台**：查看 5 个原生查询平台和 6 个本地计费平台，并在不修改会话模型的前提下固定查看。
+- **设置**：切换悬浮迷你面板/图标/关闭并重置位置，编辑模型本地价格，检查路由解析链路，复制脱敏诊断和导出用量。
+
+悬浮仪表盘的位置和显示模式保存在当前浏览器，不会同步到 Host，也不会包含凭据。完整额度中心打开时，悬浮仪表盘会自动隐藏，关闭抽屉后恢复。
+
+## 配置
+
+设置命名空间为 `dsh-quota`：
+
+```yaml
+dsh-quota:
+  enabled: true
+  refreshIntervalMs: 60000       # 15000 ~ 86400000
+  warningBalanceBelow: 10
+  warningQuotaRemainingBelow: 0.2
+
+  # 路由名无法自动识别时，显式指定实际计费平台。
+  routeMappings:
+    my-company-openrouter: openrouter
+
+  providerEnabled:
+    minimax-cn: true
+    minimax-intl: true
+    deepseek-official: true
+    openrouter: true
+    siliconflow: true
+    moonshot: true
+    zhipu: true
+    alibaba-bailian: true
+    volcengine-ark: true
+    together: true
+    fireworks: true
+
+  # 非 loopback 访问 Web UI 时必须显式信任 authority；有端口就一并填写。
+  trustedHosts:
+    - 192.168.1.20:13521
+
+  pricing:
+    default:
+      inputCacheHitPerMTokCNY: 0
+      inputCacheMissPerMTokCNY: 0
+      outputPerMTokCNY: 0
+    overrides: {}
+    peakHours:
+      weekdays: []
+      windows: []
+      timezone: Asia/Shanghai
+```
+
+价格表只用于浏览器本地估算，不会改变任何平台账单。若 `peakHours.windows` 为空，则表示不启用分时价格，插件会原样使用配置价格；只有显式配置峰时窗口时，窗口之外才采用 50% 折扣。
+
+也可以在“额度中心 → 设置”中输入模型 ID 和三项价格。界面保存的价格位于当前浏览器 `localStorage`，优先级高于 Host 同模型配置，不含任何凭据；点击“恢复 Host 价格”即可删除浏览器覆盖。
+
+## 路由解析规则
+
+1. `routeMappings` 显式配置优先。
+2. 精确匹配平台注册的 route alias。
+3. 只能从模型 ID 推断模型厂商，不能据此改写计费平台。
+4. 无法确认计费平台时返回 `unknown/unsupported`，不猜测、不展示假余额。
+
+客户端会把当前 Session 的 `sessionId`、provider、model 和 reasoning effort 传给 Host；Host 再解析计费平台。插件不再使用 `agentDefaultModel` 代替当前会话，因此不会出现多会话和切换模型时读错平台的问题。
+
+## 安全说明
+
+- API Key/Cookie 经 DSH credentials service 动态解析，不写入浏览器状态、localStorage、日志或快照。
+- 浏览器只持久化 Token 汇总、UI 偏好和用户主动填写的价格，不持久化消息正文。
+- Host 只返回归一化 `QuotaSnapshot`；存储与出站前均脱敏。
+- 自动刷新走缓存，避免高频调用上游；点击刷新才强制请求。
+- `0.0.0.0` 暴露是 DSH Web Server 的部署选择。若从局域网访问，需要在 `trustedHosts` 明确列出浏览器使用的 authority，并由反向代理承担 TLS/认证。
+- 插件不支持任意自定义 URL + Bearer Token，避免把通用配置变成 SSRF/凭据外传入口。
+
+## 常见问题
+
+- `not-configured`：未找到该平台声明的凭据名称。
+- `auth-error`：凭据存在但上游拒绝；MiniMax 国内和国际凭据/会话 Cookie 可能不通用。
+- `rate-limited`：上游限流；服务会退避并保留健康快照。
+- `unsupported`：当前 route 没有 adapter；在 `routeMappings` 指定真实计费平台。
+- 用量正常但费用显示“未配置价格”：在“设置”页为当前模型保存价格，或在 Host `pricing.overrides` 中配置。
+- 局域网页面返回 403：把实际的 `host:port` 加入 `trustedHosts`，并确保 Origin 与 Host 一致。
+
+## 兼容性与质量门
+
+- Node.js 22 或更高版本。
+- 面向 DSH `0.1.x` Web profile；DSH 仍处于 RC 演进阶段，升级 DSH 后建议先执行 Loader smoke。
+- CI 在 Node.js 22/24 上执行 TypeScript、单元测试、客户端 Loader smoke 和发布包清单检查。
+- 安全问题请按 [SECURITY.md](SECURITY.md) 私下报告；平台适配器贡献要求见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+- 插件目录投稿所需的条目、预构建包地址、截图和 GitHub Topics 已整理在 [DSH registry submission](docs/REGISTRY_SUBMISSION.md)。
+
+## 主要代码
+
+- Host 注册与 DSH 注入：`src/host/index.ts`
+- 当前会话与 token projection：`src/client/index.tsx`
+- 平台适配器：`src/host/adapters/`
+- 路由与信任校验：`src/host/routes.ts`
+- 本地用量持久化：`src/client/usage-store.ts`
+- 浏览器价格覆盖：`src/client/pricing-preferences.ts`
+- 面板与样式：`src/client/quota-panel.tsx`、`src/client/styles.css`
