@@ -8,6 +8,7 @@ import type { QuotaService } from "./quota-service.ts"
 import { RPC_PATHS } from "../shared/types.ts"
 import type { CurrentQuotaResponse, QuotaSnapshot, SessionSelectionHint } from "../shared/types.ts"
 import type { PricingTable } from "../shared/usage.ts"
+import type { LegacyUsageImportResult, LegacyUsageImportRow, UsageLedgerResponse } from "../shared/ledger.ts"
 import { sanitize } from "./adapters/base.ts"
 import { REDACTED_MARKER } from "../shared/constants.ts"
 
@@ -25,6 +26,11 @@ export interface QuotaRoutesDeps {
   isTrustedRequest?: (req: IncomingMessage) => boolean
   isEnabled?: () => boolean
   getSettings?: () => QuotaSettingsSnapshot
+  usageLedger?: {
+    query(days?: number, limit?: number): UsageLedgerResponse
+    importLegacy(rows: readonly LegacyUsageImportRow[]): Promise<LegacyUsageImportResult>
+    startBackfill(): Promise<void>
+  }
 }
 
 export interface QuotaSettingsSnapshot {
@@ -105,6 +111,41 @@ export function makeQuotaRoutes(deps: QuotaRoutesDeps): {
           warningQuotaRemainingBelow: settings.warningQuotaRemainingBelow,
           providerEnabled: settings.providerEnabled,
         })
+      }),
+      route(RPC_PATHS.getUsage, "GET", async (req, res) => {
+        if (deps.usageLedger === undefined) {
+          writeJson(res, 503, { error: "Host usage ledger is unavailable" })
+          return
+        }
+        const search = requestUrl(req).searchParams
+        const days = cleanInteger(search.get("days"), 1, 3650, 30)
+        const limit = cleanInteger(search.get("limit"), 1, 5_000, 5_000)
+        // The ledger response is built from a closed, validated shape and
+        // contains no credentials. The generic credential sanitizer cannot be
+        // used here because it intentionally redacts every field named
+        // `tokens`, which would turn all usage totals into "[redacted]".
+        writeJson(res, 200, deps.usageLedger.query(days, limit))
+      }),
+      route(RPC_PATHS.importUsage, "POST", async (req, res) => {
+        if (deps.usageLedger === undefined) {
+          writeJson(res, 503, { error: "Host usage ledger is unavailable" })
+          return
+        }
+        const input = await readJsonBody(req, 1_000_000)
+        const rows = readLegacyRows(input)
+        if (rows === undefined) {
+          writeJson(res, 400, { error: "invalid legacy usage payload" })
+          return
+        }
+        writeJson(res, 200, await deps.usageLedger.importLegacy(rows))
+      }),
+      route(RPC_PATHS.backfillUsage, "POST", async (_req, res) => {
+        if (deps.usageLedger === undefined) {
+          writeJson(res, 503, { error: "Host usage ledger is unavailable" })
+          return
+        }
+        void deps.usageLedger.startBackfill()
+        writeJson(res, 202, { accepted: true })
       }),
     ],
   }
@@ -190,6 +231,65 @@ function zeroPricing(): PricingTable {
 
 function requestUrl(req: IncomingMessage): URL {
   return new URL(req.url ?? "/", "http://localhost")
+}
+
+function cleanInteger(value: string | null, min: number, max: number, fallback: number): number {
+  if (value === null) return fallback
+  const parsed = Number(value)
+  return Number.isSafeInteger(parsed) ? Math.max(min, Math.min(max, parsed)) : fallback
+}
+
+async function readJsonBody(req: IncomingMessage, maxBytes: number): Promise<unknown> {
+  const chunks: Buffer[] = []
+  let size = 0
+  for await (const chunk of req) {
+    const value = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as string)
+    size += value.length
+    if (size > maxBytes) throw new Error("request body is too large")
+    chunks.push(value)
+  }
+  if (chunks.length === 0) return undefined
+  try { return JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown } catch { return undefined }
+}
+
+function readLegacyRows(value: unknown): LegacyUsageImportRow[] | undefined {
+  if (typeof value !== "object" || value === null) return undefined
+  const rows = (value as { rows?: unknown }).rows
+  if (!Array.isArray(rows) || rows.length > 2_000) return undefined
+  const out: LegacyUsageImportRow[] = []
+  for (const raw of rows) {
+    if (typeof raw !== "object" || raw === null) return undefined
+    const row = raw as { date?: unknown; provider?: unknown; model?: unknown; tokens?: unknown }
+    if (typeof row.date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(row.date)) return undefined
+    const provider = cleanWireString(row.provider, 160)
+    const model = cleanWireString(row.model, 320)
+    const tokens = readTokenTotals(row.tokens)
+    if (provider === undefined || model === undefined || tokens === undefined) return undefined
+    out.push({ date: row.date, provider, model, tokens })
+  }
+  return out
+}
+
+function readTokenTotals(value: unknown): import("../shared/usage.ts").TokenUsageTotals | undefined {
+  if (typeof value !== "object" || value === null) return undefined
+  const input = value as Record<string, unknown>
+  const uncachedInputTokens = tokenInteger(input.uncachedInputTokens)
+  const cacheReadTokens = tokenInteger(input.cacheReadTokens)
+  const cacheWriteTokens = tokenInteger(input.cacheWriteTokens)
+  const outputTokens = tokenInteger(input.outputTokens)
+  return uncachedInputTokens === undefined || cacheReadTokens === undefined || cacheWriteTokens === undefined || outputTokens === undefined
+    ? undefined
+    : { uncachedInputTokens, cacheReadTokens, cacheWriteTokens, outputTokens }
+}
+
+function tokenInteger(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined
+}
+
+function cleanWireString(value: unknown, maxLength: number): string | undefined {
+  if (typeof value !== "string") return undefined
+  const clean = value.trim()
+  return clean.length > 0 && clean.length <= maxLength && !/[\u0000-\u001f]/.test(clean) ? clean : undefined
 }
 
 function knownProvider(deps: QuotaRoutesDeps, id: string, res: ServerResponse): boolean {

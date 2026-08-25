@@ -7,6 +7,15 @@ import z from "@deepseek-ai/schemastery"
 import { ProviderRegistry, type ProviderRecord } from "./provider-registry.ts"
 import { QuotaService, type CredentialsServiceLike } from "./quota-service.ts"
 import { makeQuotaRoutes, type QuotaSettingsSnapshot } from "./routes.ts"
+import { resolveBillingRoute } from "./route-resolver.ts"
+import {
+  HostUsageLedger,
+  type SessionEventLike,
+  type SessionLike,
+  type SessionPersistenceLike,
+  type SessionStoreLike,
+  type StorageDomainLike,
+} from "./usage-ledger.ts"
 import { createDeepSeekAdapter } from "./adapters/deepseek.ts"
 import { createMiniMaxAdapter } from "./adapters/minimax.ts"
 import { createOpenRouterAdapter } from "./adapters/openrouter.ts"
@@ -21,7 +30,7 @@ import {
 } from "../shared/constants.ts"
 
 export const name = PLUGIN_ID
-export const inject = ["webServer", "settings", "credentials"] as const
+export const inject = ["webServer", "settings", "credentials", "storageDomain", "sessionPersistence", "sessions"] as const
 
 export interface Config {
   enabled?: boolean
@@ -32,6 +41,8 @@ export interface Config {
   providerEnabled?: Record<string, boolean>
   /** Non-loopback browser authorities allowed to call the exact plugin routes. */
   trustedHosts?: string[]
+  /** Number of days retained by the Host usage ledger. */
+  usageRetentionDays?: number
   pricing?: import("../shared/usage.ts").PricingTable
 }
 
@@ -49,6 +60,7 @@ const _ConfigSchema = z.object({
   routeMappings: z.dict(z.string()).default({}),
   providerEnabled: z.dict(z.boolean()).default({}),
   trustedHosts: z.array(z.string()).default([]),
+  usageRetentionDays: z.number().min(30).max(3650).default(90),
   pricing: z.object({
     default: PRICE_SET_SCHEMA,
     overrides: z.dict(PRICE_SET_SCHEMA).default({}),
@@ -66,10 +78,14 @@ const _ConfigSchema = z.object({
 
 export const Config = _ConfigSchema as unknown as z<Config>
 
-export function apply(ctx: Context, config?: Config): void {
+export async function apply(ctx: Context, config?: Config): Promise<void> {
   const host = ctx as Context & {
     credentials: CredentialsServiceLike
     webServer: { register(route: unknown): () => void }
+    storageDomain: StorageDomainLike
+    sessionPersistence: SessionPersistenceLike
+    sessions: SessionStoreLike
+    logger?: { warn(message: string): void }
   }
   let source: () => Config = () => config ?? {}
   const resolve = (): Required<Omit<Config, "pricing">> & Pick<Config, "pricing"> => ({
@@ -80,6 +96,7 @@ export function apply(ctx: Context, config?: Config): void {
     routeMappings: source().routeMappings ?? {},
     providerEnabled: source().providerEnabled ?? {},
     trustedHosts: source().trustedHosts ?? [],
+    usageRetentionDays: source().usageRetentionDays ?? 90,
     pricing: source().pricing,
   })
 
@@ -117,12 +134,26 @@ export function apply(ctx: Context, config?: Config): void {
     },
   })
 
+  const usageLedger = await HostUsageLedger.open({
+    storageDomain: host.storageDomain,
+    sessionPersistence: host.sessionPersistence,
+    sessions: host.sessions,
+    retainedDays: resolve().usageRetentionDays,
+    logger: host.logger,
+    resolveBillingProvider: (provider, model) => resolveBillingRoute(
+      { provider, model },
+      { registry: registry.asResolverView(), explicitMappings: resolve().routeMappings },
+    ).billingProviderId,
+  })
+  ctx.effect(() => () => usageLedger.close(), `${PLUGIN_ID}: usage-ledger`)
+
   const { routes } = makeQuotaRoutes({
     registry,
     service,
     isEnabled: () => resolve().enabled,
     isTrustedRequest: (request) => isTrustedBrowserRequest(request, resolve().trustedHosts),
     getSettings: () => settingsSnapshot,
+    usageLedger,
   })
   ctx.effect(() => {
     const disposers = routes.map((route) => host.webServer.register(route))
@@ -133,6 +164,13 @@ export function apply(ctx: Context, config?: Config): void {
     service.invalidate()
   })
   ctx.effect(() => () => offCredentials?.(), `${PLUGIN_ID}: credential-cache`)
+
+  const offSessionEvents = (ctx.on as (
+    event: string,
+    listener: (session: SessionLike, event: SessionEventLike) => void,
+  ) => () => void)("session/event", (session, event) => usageLedger.observeLive(session, event))
+  ctx.effect(() => () => offSessionEvents?.(), `${PLUGIN_ID}: usage-events`)
+  void usageLedger.startBackfill()
 }
 
 function builtInProviders(): Array<Omit<ProviderRecord, "enabled">> {
@@ -305,6 +343,7 @@ function resolveConfigShape(config: Config): Required<Omit<Config, "pricing">> &
     routeMappings: config.routeMappings ?? {},
     providerEnabled: config.providerEnabled ?? {},
     trustedHosts: config.trustedHosts ?? [],
+    usageRetentionDays: config.usageRetentionDays ?? 90,
     pricing: config.pricing,
   }
 }

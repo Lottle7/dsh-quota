@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react"
 import type { ProviderListItem, QuotaSnapshot, QuotaStatus, QuotaWindow } from "../shared/types.ts"
 import type { PriceSet, PricingTable, TokenUsageTotals } from "../shared/usage.ts"
+import type { UsageBackfillState, UsageLedgerEntry } from "../shared/ledger.ts"
 import type { Mode } from "./store.ts"
 import type { UsageAggregate, UsageBreakdownItem, UsageSeriesPoint } from "./usage-store.ts"
 import { formatCacheHitPercent, formatCount, formatCNY } from "./format.ts"
 import type { FloatingMode } from "./floating-preferences.ts"
-import { resolvePriceAt } from "./pricing.ts"
+import { computeDeltaCost, resolvePriceAt } from "./pricing.ts"
 import { t } from "./i18n.ts"
 
 type Locale = "zh-CN" | "en-US"
@@ -28,6 +29,10 @@ export interface QuotaPanelProps {
   usageLifetime: UsageAggregate
   usageSeries: UsageSeriesPoint[]
   usageBreakdown: UsageBreakdownItem[]
+  usageEntries: UsageLedgerEntry[]
+  usageSessionCount: number
+  usageRetainedDays: number
+  usageBackfill: UsageBackfillState
   pricing: PricingTable
   localPriceModels: string[]
   loading: boolean
@@ -40,6 +45,7 @@ export interface QuotaPanelProps {
   onSelectManual(id: string | null): void
   onSetMode(mode: Mode): void
   onRefresh(): void
+  onSyncUsage(): Promise<void>
   onSavePrice(model: string, prices: PriceSet | null): void
   onSetFloatingMode(mode: FloatingMode): void
   onResetFloatingPosition(): void
@@ -115,6 +121,12 @@ export function QuotaPanel(props: QuotaPanelProps) {
               locale={props.locale}
               series={props.usageSeries}
               breakdown={props.usageBreakdown}
+              entries={props.usageEntries}
+              sessionCount={props.usageSessionCount}
+              retainedDays={props.usageRetainedDays}
+              backfill={props.usageBackfill}
+              pricing={props.pricing}
+              onSync={props.onSyncUsage}
             />
           ) : null}
           {tab === "providers" ? <ProvidersView {...props} /> : null}
@@ -245,17 +257,43 @@ function UsageView(props: {
   locale: Locale
   series: UsageSeriesPoint[]
   breakdown: UsageBreakdownItem[]
+  entries: UsageLedgerEntry[]
+  sessionCount: number
+  retainedDays: number
+  backfill: UsageBackfillState
+  pricing: PricingTable
+  onSync(): Promise<void>
 }) {
+  const [syncing, setSyncing] = useState(false)
   const input = props.tokens.uncachedInputTokens + props.tokens.cacheReadTokens + props.tokens.cacheWriteTokens
   const any = input + props.tokens.outputTokens > 0
+  const currentPrice = props.model === null ? null : resolvePriceAt(props.model, props.pricing, Date.now()).prices
+  const currentHasPricing = currentPrice !== null && priceConfigured(currentPrice)
+  const currentCost = currentPrice === null ? 0 : computeDeltaCost(props.tokens, currentPrice)
+  const synchronize = (): void => {
+    setSyncing(true)
+    void props.onSync().catch(() => undefined).finally(() => setSyncing(false))
+  }
   return (
     <div className="dsh-quota-view dsh-quota-usage-view">
+      <section className={`dsh-quota-ledger-status is-${props.backfill.status}`}>
+        <div className="dsh-quota-ledger-icon"><DatabaseIcon /></div>
+        <div className="dsh-quota-ledger-copy">
+          <strong>{copy(props.locale, "Host 用量账本", "Host usage ledger")}</strong>
+          <small>{ledgerStatusText(props.locale, props.backfill, props.sessionCount, props.retainedDays)}</small>
+        </div>
+        <button type="button" onClick={synchronize} disabled={syncing || props.backfill.status === "scanning"}>
+          {syncing || props.backfill.status === "scanning"
+            ? copy(props.locale, "同步中…", "Syncing…")
+            : copy(props.locale, "同步历史", "Sync history")}
+        </button>
+      </section>
       <PanelSection title={t(props.locale, "thisConversation")} subtitle={props.model ?? undefined}>
         <MetricGrid items={[
           [t(props.locale, "input"), formatCount(input)],
           [t(props.locale, "output"), formatCount(props.tokens.outputTokens)],
           [t(props.locale, "cacheHit"), formatCacheHitPercent(props.tokens.cacheReadTokens, input)],
-          [t(props.locale, "estimatedCost"), props.today.hasPricing ? formatCNY(props.today.costCNY) : t(props.locale, "noPricing")],
+          [t(props.locale, "estimatedCost"), currentHasPricing ? formatCNY(currentCost) : t(props.locale, "noPricing")],
         ]} />
         {!any ? <p className="dsh-quota-section-hint">{t(props.locale, "usageEmpty")}</p> : null}
       </PanelSection>
@@ -267,10 +305,81 @@ function UsageView(props: {
       <PanelSection title={copy(props.locale, "平台与模型", "Provider & model")} subtitle={copy(props.locale, "近 30 天", "30 days")}>
         <UsageBreakdown items={props.breakdown} locale={props.locale} />
       </PanelSection>
+      <PanelSection
+        title={copy(props.locale, "逐次调用", "Recent calls")}
+        subtitle={copy(props.locale, `最近 ${Math.min(30, props.entries.length)} 条`, `Latest ${Math.min(30, props.entries.length)}`)}
+      >
+        <UsageLedgerList entries={props.entries} pricing={props.pricing} locale={props.locale} />
+      </PanelSection>
       {props.snapshot?.usage !== undefined ? <ProviderUsage snapshot={props.snapshot} locale={props.locale} /> : null}
       <p className="dsh-quota-privacy-note"><ShieldIcon />{t(props.locale, "costEstimate")}</p>
     </div>
   )
+}
+
+function UsageLedgerList({ entries, pricing, locale }: { entries: UsageLedgerEntry[]; pricing: PricingTable; locale: Locale }) {
+  const visible = entries.filter((entry) => tokenTotal(entry.tokens) > 0).slice(0, 30)
+  if (visible.length === 0) return <p className="dsh-quota-section-hint">{t(locale, "usageEmpty")}</p>
+  return (
+    <div className="dsh-quota-ledger-list">
+      {visible.map((entry) => {
+        const input = entry.tokens.uncachedInputTokens + entry.tokens.cacheReadTokens + entry.tokens.cacheWriteTokens
+        const { prices } = resolvePriceAt(entry.model, pricing, entry.occurredAt)
+        const cost = computeDeltaCost(entry.tokens, prices)
+        const route = entry.routeProvider === entry.billingProvider
+          ? entry.billingProvider
+          : `${entry.routeProvider} → ${entry.billingProvider}`
+        return (
+          <article className="dsh-quota-ledger-row" key={entry.id}>
+            <div className="dsh-quota-ledger-row-main">
+              <strong title={entry.model}>{entry.model}</strong>
+              <small>{route}</small>
+            </div>
+            <div className="dsh-quota-ledger-row-tokens">
+              <strong>{formatCount(input + entry.tokens.outputTokens)} tok</strong>
+              <small>{copy(locale, `输入 ${formatCount(input)} · 输出 ${formatCount(entry.tokens.outputTokens)}`, `In ${formatCount(input)} · Out ${formatCount(entry.tokens.outputTokens)}`)}</small>
+            </div>
+            <div className="dsh-quota-ledger-row-cost">
+              <strong>{priceConfigured(prices) ? formatCNY(cost) : "—"}</strong>
+              <small>{formatLedgerTime(entry.occurredAt, locale)}</small>
+            </div>
+            <div className="dsh-quota-ledger-row-meta">
+              <span>{entry.source === "browser-migration"
+                ? copy(locale, "旧版汇总", "Legacy aggregate")
+                : `T${entry.turn ?? "?"} · S${entry.step ?? "?"}`}</span>
+              <span title={entry.sessionId}>{entry.sessionId === "browser-migration" ? "migration" : entry.sessionId.slice(0, 8)}</span>
+            </div>
+          </article>
+        )
+      })}
+    </div>
+  )
+}
+
+function ledgerStatusText(locale: Locale, state: UsageBackfillState, sessions: number, retainedDays: number): string {
+  if (state.status === "scanning") {
+    return copy(locale, `正在扫描会话 ${state.scanned}/${state.total}`, `Scanning sessions ${state.scanned}/${state.total}`)
+  }
+  if (state.status === "error") return state.message ?? copy(locale, "同步失败，可重试", "Sync failed; retry available")
+  if (state.status === "idle") return copy(locale, "等待首次历史同步", "Waiting for initial history sync")
+  return copy(locale, `已同步 ${sessions} 个会话 · 保留 ${retainedDays} 天`, `${sessions} sessions synced · ${retainedDays}-day retention`)
+}
+
+function formatLedgerTime(timestamp: number, locale: Locale): string {
+  return new Intl.DateTimeFormat(locale, {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(timestamp))
+}
+
+function tokenTotal(tokens: TokenUsageTotals): number {
+  return tokens.uncachedInputTokens + tokens.cacheReadTokens + tokens.cacheWriteTokens + tokens.outputTokens
+}
+
+function priceConfigured(prices: PriceSet): boolean {
+  return prices.inputCacheHitPerMTokCNY > 0 || prices.inputCacheMissPerMTokCNY > 0 || prices.outputPerMTokCNY > 0
 }
 
 function UsageTrend({ series, locale }: { series: UsageSeriesPoint[]; locale: Locale }) {
@@ -717,4 +826,8 @@ function CloseIcon() {
 
 function ShieldIcon() {
   return <svg width="13" height="13" viewBox="0 0 13 13" fill="none" aria-hidden="true"><path d="M6.5 1.3 11 3v3.1c0 2.7-1.8 4.7-4.5 5.7C3.8 10.8 2 8.8 2 6.1V3l4.5-1.7Z" stroke="currentColor" strokeWidth="1" /><path d="m4.6 6.5 1.2 1.2 2.7-2.8" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" /></svg>
+}
+
+function DatabaseIcon() {
+  return <svg width="17" height="17" viewBox="0 0 17 17" fill="none" aria-hidden="true"><ellipse cx="8.5" cy="4" rx="5.5" ry="2.25" stroke="currentColor" strokeWidth="1.2" /><path d="M3 4v4c0 1.24 2.46 2.25 5.5 2.25S14 9.24 14 8V4M3 8v4c0 1.24 2.46 2.25 5.5 2.25S14 13.24 14 12V8" stroke="currentColor" strokeWidth="1.2" /></svg>
 }

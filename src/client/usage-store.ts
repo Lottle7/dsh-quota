@@ -1,33 +1,14 @@
 /**
- * UsageStore — owns the client's local copy of token usage.
+ * Browser aggregate mirror used by the React surfaces.
  *
- * Reads:
- *   - DSH's `tokenUsage` projection (current session's token counters)
- *   - the current model id (from the resolved billing provider route)
- *   - the host-supplied pricing table
+ * Since v0.6 the durable Host ledger is the source of truth. This store folds
+ * its per-call rows into daily/provider/model buckets and keeps a debounced
+ * localStorage mirror for fast startup and pre-v0.6 migration. The legacy
+ * projection-delta path remains only so an older browser snapshot can be
+ * exported safely during an upgrade.
  *
- * Writes:
- *   - localStorage under `dsh-quota.usage.v2` (debounced 5s)
- *   - the in-memory state object that the client store exposes to React
- *
- * The "live cost" problem: cost depends on peak/off-peak status at the
- * moment tokens were charged. We don't store per-turn timestamps (would
- * balloon localStorage), so we approximate by storing just tokens and
- * recomputing the cost live whenever:
- *   1. a new token delta is appended (it carries its own timestamp),
- *      OR
- *   2. the price table changes (settings update OR peak/off-peak boundary
- *      crosses — handled by `reconcile()`).
- *
- * Boundary (1) guarantees: cost computed for a delta is locked to the
- * rate that applied at the moment of arrival. Boundary (2) revalues
- * historical deltas at today's rates, which is approximate but matches
- * what users expect: "see the cost under the new price table."
- *
- * The store is intentionally synchronous-feeling: every public method is
- * a pure function of the current pricing table + the in-memory state.
- * Side effects (localStorage flush, listener notify) are scheduled via
- * the debouncer.
+ * Aggregate cost is recalculated against the current price table. The call
+ * detail surface can price exact ledger timestamps independently.
  */
 
 import type {
@@ -36,6 +17,7 @@ import type {
   UsageDay,
   UsageDayModelBucket,
 } from "../shared/usage.ts"
+import type { LegacyUsageImportRow, UsageLedgerEntry } from "../shared/ledger.ts"
 import {
   USAGE_STORAGE_KEY,
   USAGE_HISTORY_DAYS,
@@ -50,7 +32,7 @@ import {
 } from "./pricing.ts"
 
 /** One persisted snapshot. */
-interface UsageState {
+export interface UsageState {
   /** YYYY-MM-DD local date strings, sorted descending by date. */
   days: UsageDay[]
   /** Durable per-session projection baselines prevent replay double-counting. */
@@ -416,6 +398,55 @@ export class UsageStore {
   /** Read-only access to the current pricing table. */
   getPricing(): PricingTable {
     return this.pricing
+  }
+
+  /** Export the pre-v0.6 browser aggregates for a one-time Host migration. */
+  exportLegacyRows(): LegacyUsageImportRow[] {
+    const rows: LegacyUsageImportRow[] = []
+    for (const day of this.state.days) {
+      for (const [key, bucket] of Object.entries(day.byModel)) {
+        const { provider, model } = parseBucketKey(key)
+        rows.push({
+          date: day.date,
+          provider,
+          model,
+          tokens: {
+            uncachedInputTokens: bucket.uncachedInputTokens,
+            cacheReadTokens: bucket.cacheReadTokens,
+            cacheWriteTokens: bucket.cacheWriteTokens,
+            outputTokens: bucket.outputTokens,
+          },
+        })
+      }
+    }
+    return rows
+  }
+
+  /** Replace the browser mirror with the Host's durable per-step ledger. */
+  replaceFromLedger(entries: readonly UsageLedgerEntry[]): void {
+    const byDate = new Map<string, UsageDay>()
+    for (const entry of entries) {
+      const date = localDateString(entry.occurredAt)
+      let day = byDate.get(date)
+      if (day === undefined) {
+        day = { date, byModel: {} }
+        byDate.set(date, day)
+      }
+      const key = bucketKey(entry.billingProvider, entry.model)
+      const bucket = day.byModel[key] ?? emptyBucket()
+      const merged = addUsage(bucket, entry.tokens)
+      bucket.uncachedInputTokens = merged.uncachedInputTokens
+      bucket.cacheReadTokens = merged.cacheReadTokens
+      bucket.cacheWriteTokens = merged.cacheWriteTokens
+      bucket.outputTokens = merged.outputTokens
+      day.byModel[key] = bucket
+    }
+    this.state = {
+      days: trimHistory([...byDate.values()].sort((a, b) => b.date.localeCompare(a.date))),
+      baselines: {},
+    }
+    this.reconcile()
+    this.notify()
   }
 
   /** Subscribe to state changes. Returns an unsubscribe function. */

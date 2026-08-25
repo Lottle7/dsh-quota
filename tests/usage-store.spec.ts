@@ -335,6 +335,34 @@ test('aggregateBreakdown keeps billing provider and model identity', () => {
   store.dispose()
 })
 
+test('Host ledger replaces the local mirror and can be exported for compatibility migration', () => {
+  const storage = new MemoryStorage()
+  const store = new UsageStore({ storage, now: nowReturning(Date.now()), pricing: OFF_PEAK, reconcileIntervalMs: 0 })
+  store.replaceFromLedger([{
+    id: 'session-ledger:1:0',
+    sessionId: 'session-ledger',
+    turn: 1,
+    step: 0,
+    seq: 9,
+    occurredAt: Date.now(),
+    routeProvider: 'openrouter',
+    billingProvider: 'openrouter',
+    model: 'deepseek/deepseek-chat',
+    tokens: { uncachedInputTokens: 400, cacheReadTokens: 100, cacheWriteTokens: 20, outputTokens: 80 },
+    source: 'session-log',
+  }])
+  const rows = aggregateBreakdown(store.getState(), OFF_PEAK, Date.now)
+  assert.equal(rows[0]?.provider, 'openrouter')
+  assert.equal(rows[0]?.aggregate.inCacheMiss, 400)
+  assert.deepEqual(store.exportLegacyRows()[0]?.tokens, {
+    uncachedInputTokens: 400,
+    cacheReadTokens: 100,
+    cacheWriteTokens: 20,
+    outputTokens: 80,
+  })
+  store.dispose()
+})
+
 test('UsageStore survives a corrupt localStorage value', () => {
   const storage = new MemoryStorage()
   storage.data = 'not json {{'

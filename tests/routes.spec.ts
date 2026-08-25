@@ -155,3 +155,43 @@ test('browser trust fence allows loopback and explicitly configured LAN hosts on
   const mismatchedOrigin = request('/', 'GET', { host: 'localhost:13521', origin: 'https://evil.example' })
   assert.equal(isTrustedBrowserRequest(mismatchedOrigin, []), false)
 })
+
+test('usage route preserves numeric token buckets instead of credential-redacting them', async () => {
+  const data = fixture()
+  const routes = makeQuotaRoutes({
+    registry: data.registry,
+    service: data.service,
+    usageLedger: {
+      query() {
+        return {
+          entries: [{
+            id: 'session-1:0:0',
+            sessionId: 'session-1',
+            turn: 0,
+            step: 0,
+            seq: 7,
+            occurredAt: Date.now(),
+            routeProvider: 'openrouter',
+            billingProvider: 'openrouter',
+            model: 'deepseek/deepseek-chat',
+            tokens: { uncachedInputTokens: 123, cacheReadTokens: 45, cacheWriteTokens: 6, outputTokens: 78 },
+            source: 'session-log' as const,
+          }],
+          sessionCount: 1,
+          retainedDays: 90,
+          backfill: { status: 'ready' as const, scanned: 1, total: 1, lastCompletedAt: Date.now() },
+        }
+      },
+      async importLegacy() { return { accepted: 0, stored: 0, coveredBySessionHistory: 0 } },
+      async startBackfill() {},
+    },
+  }).routes
+  const route = routes.find((item) => item.path === RPC_PATHS.getUsage)
+  assert.ok(route)
+  const res = response()
+  await route.handler(request(RPC_PATHS.getUsage), res)
+  const body = res.json() as { entries: Array<{ id: string; tokens: { uncachedInputTokens: number } }> }
+  assert.equal(res.statusCodeSeen, 200)
+  assert.equal(body.entries[0]?.id, 'session-1:0:0')
+  assert.equal(body.entries[0]?.tokens.uncachedInputTokens, 123)
+})

@@ -90,10 +90,13 @@ export function apply(ctx: QuotaClientContext): void {
   const api: QuotaApi = createQuotaApi("")
   const store = createQuotaStore(api, readPreferences())
   const usageStore = new UsageStore({ storage: defaultUsageStorage() })
+  const legacyUsageRows = usageStore.exportLegacyRows()
   let hostPricing: PricingTable = usageStore.getPricing()
   let localPriceOverrides = readLocalPriceOverrides()
   let activeSelection: SessionSelectionHint | null = null
   let lastTokenTotals: TokenUsageTotals = { ...ZERO_USAGE }
+  let usageReloadTimer: ReturnType<typeof setTimeout> | null = null
+  let usageReloading = false
 
   const pushUsage = (): void => {
     const pricing = usageStore.getPricing()
@@ -117,16 +120,36 @@ export function apply(ctx: QuotaClientContext): void {
     writeLocalPriceOverrides(localPriceOverrides)
     applyEffectivePricing()
   }
-  const observeUsage = (): void => {
-    if (activeSelection !== null) {
-      usageStore.observeTokenUsage(
-        lastTokenTotals,
-        activeSelection.model,
-        activeSelection.sessionId ?? "current",
-        activeSelection.provider,
-      )
+  const scheduleUsageReload = (delay = 650): void => {
+    if (usageReloadTimer !== null) clearTimeout(usageReloadTimer)
+    usageReloadTimer = setTimeout(() => {
+      usageReloadTimer = null
+      void reloadHostUsage()
+    }, delay)
+  }
+  const reloadHostUsage = async (): Promise<void> => {
+    if (usageReloading) return
+    usageReloading = true
+    try {
+      const ledger = await api.getUsage(30)
+      usageStore.replaceFromLedger(ledger.entries)
+      store.actions.applyLedger(ledger)
+      pushUsage()
+      if (ledger.backfill.status === "scanning") scheduleUsageReload(800)
+    } catch {
+      // Keep the last good browser mirror while Host storage is unavailable.
+    } finally {
+      usageReloading = false
     }
+  }
+  const synchronizeHistory = async (): Promise<void> => {
+    await api.backfillUsage()
+    await reloadHostUsage()
+    scheduleUsageReload(800)
+  }
+  const observeUsage = (): void => {
     pushUsage()
+    if (activeSelection !== null) scheduleUsageReload()
   }
 
   const offUsage = usageStore.subscribe(pushUsage)
@@ -142,6 +165,10 @@ export function apply(ctx: QuotaClientContext): void {
   applyEffectivePricing()
   void applySettings().catch(() => undefined)
   void store.actions.reloadProviders()
+  void (async () => {
+    if (legacyUsageRows.length > 0) await api.importLegacyUsage(legacyUsageRows)
+    await reloadHostUsage()
+  })().catch(() => undefined)
 
   const locale: "zh-CN" | "en-US" =
     typeof navigator !== "undefined" && navigator.language.toLowerCase().startsWith("zh") ? "zh-CN" : "en-US"
@@ -233,6 +260,7 @@ export function apply(ctx: QuotaClientContext): void {
       const state = store.getSnapshot()
       const id = state.mode === "manual" ? state.manualId ?? undefined : undefined
       await store.actions.refreshNow(id)
+      await reloadHostUsage()
       schedulePoll()
     }, store.getSnapshot().refreshIntervalMs)
   }
@@ -241,6 +269,7 @@ export function apply(ctx: QuotaClientContext): void {
     else {
       const state = store.getSnapshot()
       void store.actions.refreshNow(state.mode === "manual" ? state.manualId ?? undefined : undefined)
+      void reloadHostUsage()
       schedulePoll()
     }
   }
@@ -265,6 +294,7 @@ export function apply(ctx: QuotaClientContext): void {
   })
   ctx.effect(() => () => {
     clearPoll()
+    if (usageReloadTimer !== null) clearTimeout(usageReloadTimer)
     offStore()
     if (typeof document !== "undefined") document.removeEventListener("visibilitychange", onVisibility)
     if (typeof window !== "undefined") window.removeEventListener("online", onOnline)
@@ -276,7 +306,10 @@ export function apply(ctx: QuotaClientContext): void {
       return (
         <QuotaIndicator
           snapshot={state.snapshot}
-          onOpenPanel={() => store.actions.setPanelOpen(!state.panelOpen)}
+          onOpenPanel={() => {
+            store.actions.setPanelOpen(!state.panelOpen)
+            if (!state.panelOpen) void reloadHostUsage()
+          }}
           loading={state.loading}
           manual={state.mode === "manual"}
           locale={state.locale}
@@ -307,7 +340,10 @@ export function apply(ctx: QuotaClientContext): void {
             preferences={floating}
             panelOpen={state.panelOpen}
             onPreferencesChange={updateFloating}
-            onOpenPanel={() => store.actions.setPanelOpen(true)}
+            onOpenPanel={() => {
+              store.actions.setPanelOpen(true)
+              void reloadHostUsage()
+            }}
           />
           {state.panelOpen ? (
             <QuotaPanel
@@ -316,6 +352,7 @@ export function apply(ctx: QuotaClientContext): void {
               onSelectManual={(id) => store.actions.setManual(id)}
               onSetMode={(mode) => store.actions.setMode(mode)}
               onRefresh={() => store.actions.refreshNow(state.mode === "manual" ? state.manualId ?? undefined : undefined, true)}
+              onSyncUsage={synchronizeHistory}
               onSavePrice={saveLocalPrice}
               onSetFloatingMode={(mode) => updateFloating({ ...floating, mode })}
               onResetFloatingPosition={() => updateFloating({ ...floating, position: null })}

@@ -9,6 +9,7 @@ import type {
   SettingsSnapshotResponse,
 } from "../shared/types.ts"
 import type { PricingTable, TokenUsageTotals } from "../shared/usage.ts"
+import type { UsageBackfillState, UsageLedgerEntry, UsageLedgerResponse } from "../shared/ledger.ts"
 import type { QuotaApi } from "./api.ts"
 import type { UsageAggregate, UsageBreakdownItem, UsageSeriesPoint } from "./usage-store.ts"
 
@@ -43,6 +44,10 @@ export interface QuotaState {
   usageLifetime: UsageAggregate
   usageSeries: UsageSeriesPoint[]
   usageBreakdown: UsageBreakdownItem[]
+  usageEntries: UsageLedgerEntry[]
+  usageSessionCount: number
+  usageRetainedDays: number
+  usageBackfill: UsageBackfillState
   pricing: PricingTable
   localPriceModels: string[]
 }
@@ -67,6 +72,7 @@ export interface QuotaActions {
     breakdown?: UsageBreakdownItem[]
   }): void
   applyPricing(pricing: PricingTable, localPriceModels: string[]): void
+  applyLedger(payload: UsageLedgerResponse): void
 }
 
 export interface QuotaStore {
@@ -115,6 +121,10 @@ export function createQuotaStore(api: QuotaApi, preferences?: Partial<QuotaPrefe
     usageLifetime: { ...EMPTY_USAGE },
     usageSeries: [],
     usageBreakdown: [],
+    usageEntries: [],
+    usageSessionCount: 0,
+    usageRetainedDays: 90,
+    usageBackfill: { status: "idle", scanned: 0, total: 0, lastCompletedAt: null },
     pricing: EMPTY_PRICING,
     localPriceModels: [],
   }
@@ -212,6 +222,16 @@ export function createQuotaStore(api: QuotaApi, preferences?: Partial<QuotaPrefe
     },
     applyPricing(pricing, localPriceModels) {
       state = { ...state, pricing, localPriceModels: [...localPriceModels].sort() }
+      notify()
+    },
+    applyLedger(payload) {
+      state = {
+        ...state,
+        usageEntries: [...payload.entries],
+        usageSessionCount: payload.sessionCount,
+        usageRetainedDays: payload.retainedDays,
+        usageBackfill: { ...payload.backfill },
+      }
       notify()
     },
     async reloadProviders() {

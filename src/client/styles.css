@@ -469,6 +469,27 @@ body[data-ds-dark-theme] .dsh-quota-floating.is-card { box-shadow: 0 16px 46px r
 .dsh-quota-metric-grid span { display: block; overflow: hidden; color: var(--q-text-3); font-size: 8px; font-weight: 620; letter-spacing: .04em; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
 .dsh-quota-metric-grid strong { display: block; margin-top: 3px; overflow: hidden; color: var(--q-text); font-size: 12px; font-weight: 670; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
 
+.dsh-quota-ledger-status { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 11px 12px; border: 1px solid color-mix(in srgb, var(--q-success) 26%, var(--q-line)); border-radius: 13px; background: linear-gradient(135deg, color-mix(in srgb, var(--q-success) 7%, var(--q-surface)), var(--q-surface)); }
+.dsh-quota-ledger-status.is-scanning { border-color: color-mix(in srgb, var(--q-accent) 28%, var(--q-line)); }
+.dsh-quota-ledger-status.is-error { border-color: color-mix(in srgb, var(--q-danger) 28%, var(--q-line)); }
+.dsh-quota-ledger-icon { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 10px; background: color-mix(in srgb, var(--q-success) 11%, var(--q-surface)); color: var(--q-success); }
+.dsh-quota-ledger-status.is-scanning .dsh-quota-ledger-icon { background: color-mix(in srgb, var(--q-accent) 10%, var(--q-surface)); color: var(--q-accent); }
+.dsh-quota-ledger-status.is-error .dsh-quota-ledger-icon { background: color-mix(in srgb, var(--q-danger) 10%, var(--q-surface)); color: var(--q-danger); }
+.dsh-quota-ledger-copy { min-width: 0; }
+.dsh-quota-ledger-copy strong { display: block; color: var(--q-text); font-size: 10.5px; font-weight: 670; }
+.dsh-quota-ledger-copy small { display: block; margin-top: 2px; overflow: hidden; color: var(--q-text-3); font-size: 8.5px; text-overflow: ellipsis; white-space: nowrap; }
+.dsh-quota-ledger-status > button { appearance: none; min-height: 28px; padding: 0 9px; border: 1px solid var(--q-line); border-radius: 8px; background: var(--q-surface); color: var(--q-text-2); cursor: pointer; font-size: 8.5px; font-weight: 630; }
+.dsh-quota-ledger-status > button:hover:not(:disabled) { border-color: color-mix(in srgb, var(--q-accent) 32%, var(--q-line)); color: var(--q-text); }
+.dsh-quota-ledger-status > button:disabled { opacity: .55; cursor: default; }
+
+.dsh-quota-ledger-list { display: flex; flex-direction: column; gap: 6px; }
+.dsh-quota-ledger-row { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(105px, .8fr) auto; gap: 6px 12px; align-items: center; padding: 10px 11px 8px; border: 1px solid var(--q-line); border-radius: 11px; background: var(--q-surface); }
+.dsh-quota-ledger-row-main, .dsh-quota-ledger-row-tokens { min-width: 0; }
+.dsh-quota-ledger-row strong { display: block; overflow: hidden; color: var(--q-text); font-size: 9.5px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.dsh-quota-ledger-row small { display: block; margin-top: 2px; overflow: hidden; color: var(--q-text-3); font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+.dsh-quota-ledger-row-cost { min-width: 62px; text-align: right; }
+.dsh-quota-ledger-row-meta { grid-column: 1 / -1; display: flex; justify-content: space-between; gap: 10px; padding-top: 6px; border-top: 1px solid var(--q-line); color: var(--q-text-3); font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 7.5px; }
+
 .dsh-quota-provider-usage-meta { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 12px; padding: 8px 10px; border-radius: 9px; background: var(--q-surface-2); color: var(--q-text-3); font-size: 9px; }
 .dsh-quota-provider-usage-meta strong { color: var(--q-text-2); font-weight: 620; }
 
@@ -587,6 +608,11 @@ body[data-ds-dark-theme] .dsh-quota-floating.is-card { box-shadow: 0 16px 46px r
   .dsh-quota-provider-grid { grid-template-columns: 1fr; }
   .dsh-quota-price-grid { grid-template-columns: 1fr; }
   .dsh-quota-diagnostic-grid > div { grid-template-columns: 110px minmax(0, 1fr); }
+  .dsh-quota-ledger-status { grid-template-columns: 34px minmax(0, 1fr); }
+  .dsh-quota-ledger-status > button { grid-column: 1 / -1; }
+  .dsh-quota-ledger-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .dsh-quota-ledger-row-cost { grid-column: 2; grid-row: 1; }
+  .dsh-quota-ledger-row-tokens { grid-column: 1 / -1; }
   .dsh-quota-hero-card { min-height: 108px; padding: 16px; }
   .dsh-quota-hero-copy > strong { font-size: 24px; }
   .dsh-quota-hero-ring { width: 64px; height: 64px; flex-basis: 64px; }

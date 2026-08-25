@@ -14,6 +14,7 @@ import type {
   SettingsSnapshotResponse,
 } from "../shared/types.ts"
 import { RPC_PATHS } from "../shared/types.ts"
+import type { LegacyUsageImportResult, LegacyUsageImportRow, UsageLedgerResponse } from "../shared/ledger.ts"
 
 export class QuotaApiError extends Error {
   readonly status: number
@@ -44,6 +45,9 @@ export interface QuotaApi {
   getProvider(id: ProviderId): Promise<{ snapshot: QuotaSnapshot; fallback?: QuotaSnapshot }>
   refresh(id?: ProviderId, selection?: SessionSelectionHint): Promise<CurrentQuotaResponse | { snapshot: QuotaSnapshot; fallback?: QuotaSnapshot }>
   getSettings(): Promise<SettingsSnapshotResponse>
+  getUsage(days?: number): Promise<UsageLedgerResponse>
+  importLegacyUsage(rows: readonly LegacyUsageImportRow[]): Promise<LegacyUsageImportResult>
+  backfillUsage(): Promise<void>
 }
 
 export function createQuotaApi(base = ""): QuotaApi {
@@ -88,6 +92,30 @@ export function createQuotaApi(base = ""): QuotaApi {
     async getSettings() {
       return readJson<SettingsSnapshotResponse>(
         await fetch(url(RPC_PATHS.getSettings), { method: "GET" }),
+      )
+    },
+    async getUsage(days = 30) {
+      const search = new URLSearchParams({ days: String(days), limit: "5000" })
+      return readJson<UsageLedgerResponse>(
+        await fetch(`${url(RPC_PATHS.getUsage)}?${search.toString()}`, { method: "GET" }),
+      )
+    },
+    async importLegacyUsage(rows) {
+      return readJson<LegacyUsageImportResult>(
+        await fetch(url(RPC_PATHS.importUsage), {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ rows }),
+        }),
+      )
+    },
+    async backfillUsage() {
+      await readJson<{ accepted: true }>(
+        await fetch(url(RPC_PATHS.backfillUsage), {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: "{}",
+        }),
       )
     },
   }

@@ -6,7 +6,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/Node.js-%3E%3D22-43853d.svg)](package.json)
 
-DSH Web 的多平台额度、余额、Token 成本与路由诊断中心。当前版本为 `0.5.1`。
+DSH Web 的多平台额度、余额、Token 成本与路由诊断中心。当前版本为 `0.6.0`。
 
 插件直接跟随 DeepSeek HARNESS 的当前 `Session` 和该会话的模型选择，区分“模型厂商”和“实际计费平台”。例如会话通过 OpenRouter 使用 MiniMax 模型时，额度仍归到 OpenRouter，不会误查 MiniMax。
 
@@ -16,10 +16,13 @@ DSH Web 的多平台额度、余额、Token 成本与路由诊断中心。当前
 
 - 跟随当前会话：订阅 DSH `sessions.currentProvideInfo`、`tokenUsage` projection 和会话级 `modelDirectories`。
 - 远端额度：统一展示余额、5 小时/周额度窗口、Key 消费限额与平台侧用量。
+- Host 用量账本：按每次模型调用持久化 Token，并从已有 Session 日志安全回填，无需恢复或运行 Agent。
 - 本地用量：按平台和模型统计当前会话、今日、近 30 天 Token 及估算费用。
 - 悬浮仪表盘：默认常驻显示当前平台、模型、会话 Token、估算费用与缓存命中；可拖动、折叠成图标或关闭，并记住位置。
 - 用量分析：展示连续 7 日趋势和近 30 天平台/模型拆分，空闲日期不会被压缩掉。
-- 可靠计数：持久化每个 Session 的累计 Token 基线，刷新页面或切换模型不会重复计费。
+- 可靠计数：同一 turn/step 的流式与最终 usage 采用覆盖语义，刷新页面、重启 Host 或切换模型不会重复计数。
+- 历史迁移：旧版浏览器汇总只导入 Session 日志未覆盖的差额，升级后历史不丢失也不重复。
+- 逐次明细：展示最近调用的模型、路由/计费平台、输入输出 Token、费用、时间和 turn/step。
 - 模型价格：可直接在界面为任意模型设置人民币/百万 Token 价格；浏览器覆盖可随时恢复为 Host 配置。
 - 安全诊断：显示 route、计费平台、模型厂商、解析置信度和缓存状态，可复制不含凭据的诊断报告。
 - 数据导出：把本地 7 日趋势和 30 日模型拆分导出为 JSON。
@@ -60,14 +63,14 @@ DSH Web 的多平台额度、余额、Token 成本与路由诊断中心。当前
 推荐把预构建的 Release 安装到 DSH Web profile，然后重启 DSH Web：
 
 ```bash
-dsh plugin --profile web add "https://github.com/Lottle7/dsh-quota/releases/download/v0.5.1/dsh-quota.tgz"
+dsh plugin --profile web add "https://github.com/Lottle7/dsh-quota/releases/download/v0.6.0/dsh-quota.tgz"
 dsh web
 ```
 
 预构建包不需要在本机编译 TypeScript。也可以安装带版本的 GitHub 源码；pnpm 10 或更高版本若提示 `allowBuilds`，请按提示允许该包的构建脚本后重试：
 
 ```bash
-dsh plugin --profile web add "github:Lottle7/dsh-quota#v0.5.1"
+dsh plugin --profile web add "github:Lottle7/dsh-quota#v0.6.0"
 ```
 
 升级时把上述 Release URL 换成新版本；卸载使用：
@@ -100,7 +103,7 @@ dsh plugin --profile web add .
 ## 界面结构
 
 - **总览**：当前计费平台的余额/额度窗口，以及今日费用、Token、缓存命中和平台连接摘要。
-- **用量**：当前会话、今日、近 30 天、连续 7 日图表，以及按计费平台和模型拆分的排行榜。
+- **用量**：当前会话、今日、近 30 天、Host 历史同步、连续 7 日图表、平台/模型排行和逐次调用明细。
 - **平台**：查看 5 个原生查询平台和 6 个本地计费平台，并在不修改会话模型的前提下固定查看。
 - **设置**：切换悬浮迷你面板/图标/关闭并重置位置，编辑模型本地价格，检查路由解析链路，复制脱敏诊断和导出用量。
 
@@ -116,6 +119,7 @@ dsh-quota:
   refreshIntervalMs: 60000       # 15000 ~ 86400000
   warningBalanceBelow: 10
   warningQuotaRemainingBelow: 0.2
+  usageRetentionDays: 90          # 30 ~ 3650
 
   # 路由名无法自动识别时，显式指定实际计费平台。
   routeMappings:
@@ -150,6 +154,8 @@ dsh-quota:
       timezone: Asia/Shanghai
 ```
 
+`usageRetentionDays` 控制 Host 用量账本保留天数；界面默认查询最近 30 天。
+
 价格表只用于浏览器本地估算，不会改变任何平台账单。若 `peakHours.windows` 为空，则表示不启用分时价格，插件会原样使用配置价格；只有显式配置峰时窗口时，窗口之外才采用 50% 折扣。
 
 也可以在“额度中心 → 设置”中输入模型 ID 和三项价格。界面保存的价格位于当前浏览器 `localStorage`，优先级高于 Host 同模型配置，不含任何凭据；点击“恢复 Host 价格”即可删除浏览器覆盖。
@@ -166,8 +172,9 @@ dsh-quota:
 ## 安全说明
 
 - API Key/Cookie 经 DSH credentials service 动态解析，不写入浏览器状态、localStorage、日志或快照。
-- 浏览器只持久化 Token 汇总、UI 偏好和用户主动填写的价格，不持久化消息正文。
-- Host 只返回归一化 `QuotaSnapshot`；存储与出站前均脱敏。
+- Host 账本只保存 Session 标识、turn/step、时间、路由/模型和 Token 桶，不保存提示词、回复正文、工具参数、API Key 或 Cookie。
+- 浏览器只保留 UI 偏好、本地价格覆盖和兼容汇总镜像，不持久化消息正文。
+- 平台 API 响应和 `QuotaSnapshot` 在存储及出站前递归脱敏；用量接口只从封闭校验过的数值账本结构生成响应。
 - 自动刷新走缓存，避免高频调用上游；点击刷新才强制请求。
 - `0.0.0.0` 暴露是 DSH Web Server 的部署选择。若从局域网访问，需要在 `trustedHosts` 明确列出浏览器使用的 authority，并由反向代理承担 TLS/认证。
 - 插件不支持任意自定义 URL + Bearer Token，避免把通用配置变成 SSRF/凭据外传入口。
@@ -184,7 +191,7 @@ dsh-quota:
 ## 兼容性与质量门
 
 - Node.js 22 或更高版本。
-- 面向 DSH `0.1.x` Web profile；DSH 仍处于 RC 演进阶段，升级 DSH 后建议先执行 Loader smoke。
+- 面向 DSH `0.1.1-rc.2` 或更高版本 Web profile（需要官方 storage-domain 与 Session inspect 服务）；升级 DSH 后建议先执行 Loader smoke。
 - CI 在 Node.js 22/24 上执行 TypeScript、单元测试、客户端 Loader smoke 和发布包清单检查。
 - 安全问题请按 [SECURITY.md](SECURITY.md) 私下报告；平台适配器贡献要求见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 - 插件目录投稿所需的条目、预构建包地址、截图和 GitHub Topics 已整理在 [DSH registry submission](docs/REGISTRY_SUBMISSION.md)。

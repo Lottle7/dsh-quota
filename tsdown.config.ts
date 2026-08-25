@@ -14,6 +14,7 @@ const shared = {
       'react-dom',
       '@deepseek-ai/dsh-settings',
       '@deepseek-ai/schemastery',
+      'zod',
     ],
   },
 } as const

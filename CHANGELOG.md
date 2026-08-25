@@ -3,6 +3,27 @@
 All notable changes to this project are documented in this file. The project
 follows [Semantic Versioning](https://semver.org/).
 
+## [0.6.0] - 2026-08-25
+
+### Added
+
+- Durable Host-side per-call usage ledger backed by DSH storage-domain.
+- Revision-aware historical backfill through the official immutable Session inspection API.
+- Sync status, manual history rescan and recent call-level usage details in the Usage tab.
+- Configurable 30–3650 day Host retention (`usageRetentionDays`, default 90).
+- Compatibility migration for pre-v0.6 browser aggregates that imports only history not covered by native Session logs.
+
+### Changed
+
+- Daily and rolling usage analytics now use the Host ledger as their source of truth; browser storage is a compatibility mirror.
+- Current-conversation estimated cost now uses only the current Session Token projection instead of today's aggregate cost.
+
+### Fixed
+
+- Usage no longer remains at zero while DSH's native footer reports Tokens.
+- Repeated streaming/final usage samples for the same turn and step no longer double-count.
+- Numeric Token buckets bypass the credential sanitizer that would otherwise replace the `tokens` field with `[redacted]`.
+
 ## [0.5.1] - 2026-08-25
 
 ### Added
