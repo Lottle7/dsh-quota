@@ -3,6 +3,23 @@
 All notable changes to this project are documented in this file. The project
 follows [Semantic Versioning](https://semver.org/).
 
+## [0.8.0] - 2026-08-26
+
+### Added
+
+- Host-configurable custom providers for credential-free local Token/cost attribution.
+- Hardened public HTTPS JSON adapters with Bearer, `X-API-Key`, or unauthenticated GET requests.
+- Safe dot-path mappings for balance, usage, limit and remaining values, including currency and unit scaling.
+- Automatic custom-provider cards, route aliases, model-vendor classification and live registry rebuilding.
+- Generation-aware cache invalidation so an old in-flight request cannot overwrite a reconfigured provider.
+- Live cache invalidation on DSH's canonical `credentials/reference-updated` event.
+
+### Security
+
+- Reject non-HTTPS, non-443, query-bearing, credential-bearing, private, loopback and reserved endpoints.
+- Validate every DNS result and pin TLS connections to validated public addresses to prevent DNS rebinding.
+- Refuse redirects and arbitrary headers, cap responses at 256 KiB, and keep endpoints, credential references and raw JSON out of browser payloads.
+
 ## [0.7.0] - 2026-08-26
 
 ### Added

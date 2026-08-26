@@ -22,6 +22,13 @@ import { createOpenRouterAdapter } from "./adapters/openrouter.ts"
 import { createSiliconFlowAdapter } from "./adapters/siliconflow.ts"
 import { createLocalAccountingAdapter } from "./adapters/local-accounting.ts"
 import {
+  createCustomJsonAdapter,
+  normalizeCustomProviderConfig,
+  normalizeCustomProviderSet,
+  type CustomProviderConfig,
+  type NormalizedCustomProviderConfig,
+} from "./adapters/custom-json.ts"
+import {
   DEFAULT_REFRESH_INTERVAL_MS,
   MAX_REFRESH_INTERVAL_MS,
   MIN_REFRESH_INTERVAL_MS,
@@ -44,12 +51,35 @@ export interface Config {
   /** Number of days retained by the Host usage ledger. */
   usageRetentionDays?: number
   pricing?: import("../shared/usage.ts").PricingTable
+  /** Extra local-accounting or public HTTPS JSON billing providers. */
+  customProviders?: CustomProviderConfig[]
 }
 
 const PRICE_SET_SCHEMA = z.object({
   inputCacheHitPerMTokCNY: z.number().min(0).default(0),
   inputCacheMissPerMTokCNY: z.number().min(0).default(0),
   outputPerMTokCNY: z.number().min(0).default(0),
+})
+
+const CUSTOM_PROVIDER_SCHEMA = z.object({
+  id: z.string().default(""),
+  displayName: z.string().default(""),
+  kind: z.union(["local", "http-json"]).default("local"),
+  description: z.string().default(""),
+  region: z.string().default(""),
+  website: z.string().default(""),
+  brandColor: z.string().default(""),
+  routeAliases: z.array(z.string()).default([]),
+  modelVendors: z.array(z.string()).default([]),
+  endpoint: z.string().default(""),
+  credentialRef: z.string().default(""),
+  auth: z.union(["bearer", "x-api-key", "none"]).default("bearer"),
+  balancePath: z.string().default(""),
+  usagePath: z.string().default(""),
+  limitPath: z.string().default(""),
+  remainingPath: z.string().default(""),
+  currency: z.string().default("USD"),
+  valueScale: z.number().min(0.000000001).max(1_000_000_000).default(1),
 })
 
 const _ConfigSchema = z.object({
@@ -61,6 +91,7 @@ const _ConfigSchema = z.object({
   providerEnabled: z.dict(z.boolean()).default({}),
   trustedHosts: z.array(z.string()).default([]),
   usageRetentionDays: z.number().min(30).max(3650).default(90),
+  customProviders: z.array(CUSTOM_PROVIDER_SCHEMA).default([]),
   pricing: z.object({
     default: PRICE_SET_SCHEMA,
     overrides: z.dict(PRICE_SET_SCHEMA).default({}),
@@ -97,11 +128,39 @@ export async function apply(ctx: Context, config?: Config): Promise<void> {
     providerEnabled: source().providerEnabled ?? {},
     trustedHosts: source().trustedHosts ?? [],
     usageRetentionDays: source().usageRetentionDays ?? 90,
+    customProviders: source().customProviders ?? [],
     pricing: source().pricing,
   })
 
   const registry = new ProviderRegistry()
   for (const provider of builtInProviders()) registry.register({ ...provider, enabled: true })
+  const builtInProviderIds = new Set(registry.ids())
+  const builtInRouteAliases = new Set([...registry.asResolverView().values()].flatMap((provider) => provider.routeAliases))
+  const customProviderIds = new Set<string>()
+  const syncCustomProviders = (): void => {
+    for (const id of customProviderIds) registry.unregister(id)
+    customProviderIds.clear()
+    const claimedAliases = new Set(builtInRouteAliases)
+    for (const input of resolve().customProviders) {
+      try {
+        const normalized = normalizeCustomProviderConfig(input)
+        if (registry.has(normalized.id)) {
+          host.logger?.warn(`[${PLUGIN_ID}] ignored custom provider "${safeProviderId(input.id)}": id is already registered`)
+          continue
+        }
+        const aliasCollision = normalized.routeAliases.find((alias) => claimedAliases.has(alias))
+        if (aliasCollision !== undefined) {
+          host.logger?.warn(`[${PLUGIN_ID}] ignored custom provider "${safeProviderId(input.id)}": route alias is already registered`)
+          continue
+        }
+        registry.register({ ...customProviderRecord(normalized), enabled: true })
+        customProviderIds.add(normalized.id)
+        for (const alias of normalized.routeAliases) claimedAliases.add(alias)
+      } catch (error) {
+        host.logger?.warn(`[${PLUGIN_ID}] ignored custom provider "${safeProviderId(input.id)}": ${safeConfigError(error)}`)
+      }
+    }
+  }
   const applyFlags = (): void => {
     const flags = resolve().providerEnabled
     for (const id of registry.ids()) {
@@ -109,6 +168,7 @@ export async function apply(ctx: Context, config?: Config): Promise<void> {
       if (record !== undefined) record.enabled = flags[id] ?? true
     }
   }
+  syncCustomProviders()
   applyFlags()
 
   const service = new QuotaService(registry, host.credentials, {
@@ -124,13 +184,18 @@ export async function apply(ctx: Context, config?: Config): Promise<void> {
     setSource: (nextSource: () => Config) => {
       source = nextSource
       settingsSnapshot = snapshot(resolve())
+      syncCustomProviders()
       applyFlags()
       service.invalidate()
     },
     onChange: () => {
       settingsSnapshot = snapshot(resolve())
+      syncCustomProviders()
       applyFlags()
       service.invalidate()
+    },
+    validate: (value) => {
+      normalizeCustomProviderSet(value.customProviders ?? [], builtInProviderIds, builtInRouteAliases)
     },
   })
 
@@ -160,7 +225,7 @@ export async function apply(ctx: Context, config?: Config): Promise<void> {
     return () => { for (const dispose of disposers.reverse()) dispose() }
   }, `${PLUGIN_ID}: routes`)
 
-  const offCredentials = (ctx.on as (event: string, listener: () => void) => () => void)("credentials/updated", () => {
+  const offCredentials = (ctx.on as (event: string, listener: (ref: string) => void) => () => void)("credentials/reference-updated", () => {
     service.invalidate()
   })
   ctx.effect(() => () => offCredentials?.(), `${PLUGIN_ID}: credential-cache`)
@@ -171,6 +236,33 @@ export async function apply(ctx: Context, config?: Config): Promise<void> {
   ) => () => void)("session/event", (session, event) => usageLedger.observeLive(session, event))
   ctx.effect(() => () => offSessionEvents?.(), `${PLUGIN_ID}: usage-events`)
   void usageLedger.startBackfill()
+}
+
+export function customProviderRecord(config: NormalizedCustomProviderConfig): Omit<ProviderRecord, "enabled"> {
+  const localAccounting = config.kind === "local"
+  const adapter = localAccounting
+    ? createLocalAccountingAdapter({ id: config.id, displayName: config.displayName })
+    : createCustomJsonAdapter(config)
+  return {
+    id: config.id,
+    displayName: config.displayName,
+    description: config.description,
+    region: config.region,
+    website: config.website,
+    brandColor: config.brandColor,
+    routeAliases: config.routeAliases,
+    modelVendors: config.modelVendors,
+    capabilities: localAccounting
+      ? { balance: false, quota: false, usage: false, localAccounting: true }
+      : {
+          balance: config.balancePath !== undefined || config.remainingPath !== undefined,
+          quota: config.limitPath !== undefined,
+          usage: config.usagePath !== undefined,
+        },
+    custom: true,
+    credentialRefs: adapter.credentialRefs,
+    adapter,
+  }
 }
 
 function builtInProviders(): Array<Omit<ProviderRecord, "enabled">> {
@@ -344,8 +436,19 @@ function resolveConfigShape(config: Config): Required<Omit<Config, "pricing">> &
     providerEnabled: config.providerEnabled ?? {},
     trustedHosts: config.trustedHosts ?? [],
     usageRetentionDays: config.usageRetentionDays ?? 90,
+    customProviders: config.customProviders ?? [],
     pricing: config.pricing,
   }
+}
+
+function safeProviderId(value: unknown): string {
+  return typeof value === "string"
+    ? value.replace(/[^a-zA-Z0-9-]/g, "?").slice(0, 64)
+    : "?"
+}
+
+function safeConfigError(error: unknown): string {
+  return error instanceof Error ? error.message : "invalid configuration"
 }
 
 export function isTrustedBrowserRequest(request: IncomingMessage, trustedHosts: readonly string[]): boolean {

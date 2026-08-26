@@ -53,6 +53,8 @@ export class QuotaService {
   private readonly credentials: CredentialsServiceLike
   private readonly cache = new Map<ProviderId, CacheEntry>()
   private readonly inFlight = new Map<ProviderId, Promise<QuotaSnapshot>>()
+  private globalGeneration = 0
+  private readonly providerGenerations = new Map<ProviderId, number>()
   private readonly ttl: () => number
   private readonly nowFn: () => number
   private readonly hashFn: (sources: readonly string[]) => string
@@ -87,8 +89,9 @@ export class QuotaService {
   refresh(providerId: ProviderId, signal?: AbortSignal): Promise<QuotaSnapshot> {
     const existing = this.inFlight.get(providerId)
     if (existing !== undefined) return existing
-    const promise = this.doRefresh(providerId, signal).finally(() => {
-      this.inFlight.delete(providerId)
+    const generation = this.generation(providerId)
+    const promise = this.doRefresh(providerId, generation, signal).finally(() => {
+      if (this.inFlight.get(providerId) === promise) this.inFlight.delete(providerId)
     })
     this.inFlight.set(providerId, promise)
     return promise
@@ -106,9 +109,13 @@ export class QuotaService {
   /** Invalidate the cache (e.g. after a credentials/updated event). */
   invalidate(providerId?: ProviderId): void {
     if (providerId === undefined) {
+      this.globalGeneration++
       this.cache.clear()
+      this.inFlight.clear()
     } else {
+      this.providerGenerations.set(providerId, (this.providerGenerations.get(providerId) ?? 0) + 1)
       this.cache.delete(providerId)
+      this.inFlight.delete(providerId)
     }
   }
 
@@ -137,7 +144,7 @@ export class QuotaService {
     }
   }
 
-  private async doRefresh(providerId: ProviderId, signal?: AbortSignal): Promise<QuotaSnapshot> {
+  private async doRefresh(providerId: ProviderId, generation: string, signal?: AbortSignal): Promise<QuotaSnapshot> {
     const record = this.registry.get(providerId)
     if (record === undefined) {
       throw new Error(`Unknown provider "${providerId}"`)
@@ -187,8 +194,15 @@ export class QuotaService {
       }
     }
     const snapshot = applyThresholds(sanitize(rawSnapshot) as QuotaSnapshot, this.thresholds())
-    this._store(providerId, snapshot, sourceHash)
+    // A settings/credential reload may replace this provider while its old
+    // request is still in flight. Never let that response repopulate the new
+    // generation's cache.
+    if (this.generation(providerId) === generation) this._store(providerId, snapshot, sourceHash)
     return snapshot
+  }
+
+  private generation(providerId: ProviderId): string {
+    return `${this.globalGeneration}:${this.providerGenerations.get(providerId) ?? 0}`
   }
 
   private async _sourceHashForProvider(refs: readonly string[]): Promise<string> {

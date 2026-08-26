@@ -311,6 +311,7 @@ export function apply(ctx: QuotaClientContext): void {
       return (
         <QuotaIndicator
           snapshot={state.snapshot}
+          brandColor={state.providers.find((provider) => provider.id === state.snapshot?.providerId)?.brandColor}
           onOpenPanel={() => {
             store.actions.setPanelOpen(!state.panelOpen)
             if (!state.panelOpen) void reloadHostUsage()
@@ -342,6 +343,7 @@ export function apply(ctx: QuotaClientContext): void {
         <>
           <FloatingQuota
             snapshot={state.snapshot}
+            brandColor={state.providers.find((provider) => provider.id === state.snapshot?.providerId)?.brandColor}
             currentModel={state.currentModel}
             currentTokens={state.currentTokens}
             usageToday={state.usageToday}

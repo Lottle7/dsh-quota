@@ -9,7 +9,7 @@ English | [简体中文](README.zh.md)
 
 Multi-provider quota, balance, and Token-cost dashboard for **DeepSeek Harness (DSH) Web**.
 
-`dsh-quota` follows the active DSH Session and distinguishes the model vendor from the route that actually bills it. If a Session runs a MiniMax model through OpenRouter, usage remains attributed to OpenRouter. It combines five native account integrations, six local-accounting routes, a draggable always-on widget, usage analytics, local model pricing, and safe route diagnostics.
+`dsh-quota` follows the active DSH Session and distinguishes the model vendor from the route that actually bills it. If a Session runs a MiniMax model through OpenRouter, usage remains attributed to OpenRouter. It combines five native account integrations, six built-in local-accounting routes, configurable third-party providers, a draggable always-on widget, usage analytics, local model pricing, and safe route diagnostics.
 
 ![dsh-quota quota center](docs/assets/quota-center.png)
 
@@ -18,14 +18,14 @@ Multi-provider quota, balance, and Token-cost dashboard for **DeepSeek Harness (
 Install the prebuilt release into the DSH Web profile, then restart DSH Web:
 
 ```bash
-dsh plugin --profile web add "https://github.com/Lottle7/dsh-quota/releases/download/v0.7.0/dsh-quota.tgz"
+dsh plugin --profile web add "https://github.com/Lottle7/dsh-quota/releases/download/v0.8.0/dsh-quota.tgz"
 dsh web
 ```
 
 The prebuilt archive does not require a local TypeScript build. To install the tagged source instead, use the command below and follow pnpm's `allowBuilds` prompt if pnpm 10 or later asks for it:
 
 ```bash
-dsh plugin --profile web add "github:Lottle7/dsh-quota#v0.7.0"
+dsh plugin --profile web add "github:Lottle7/dsh-quota#v0.8.0"
 ```
 
 ## Highlights
@@ -44,6 +44,7 @@ dsh plugin --profile web add "github:Lottle7/dsh-quota#v0.7.0"
 - Lets you edit per-model CNY-per-million-Token prices in the browser and restore Host defaults at any time.
 - Explains route resolution, billing provider, model vendor, confidence, and cache state in a credential-free diagnostic report.
 - Supports desktop drawers, a responsive mobile bottom sheet, light/dark themes, and Chinese/English UI copy.
+- Registers custom local-accounting routes or hardened public HTTPS JSON billing endpoints directly from Host settings.
 
 ## Supported platforms
 
@@ -74,7 +75,7 @@ Local-accounting integrations never invent a balance. They report only the Token
 
 - **Overview** — active billing-platform balance/quota, today's Token cost and connection summary.
 - **Usage** — Session, today and 30-day totals, Host history sync, seven-day chart, provider/model rankings, filtered call history, pagination, and CSV export.
-- **Providers** — inspect all 11 integrations or pin one for viewing without changing the Session model.
+- **Providers** — inspect all built-in and custom integrations or pin one for viewing without changing the Session model.
 - **Settings** — control the floating widget, edit cost budgets and local prices, inspect route resolution, copy diagnostics, and export usage.
 
 The floating widget's mode and position are browser-local. It temporarily yields while the full quota center is open and returns when the drawer closes.
@@ -108,6 +109,32 @@ dsh-quota:
     together: true
     fireworks: true
 
+  customProviders:
+    # Local accounting only: no remote request and no extra credential.
+    - id: my-company-relay
+      displayName: My Company Relay
+      kind: local
+      description: Internal model gateway
+      region: Global
+      brandColor: "#2563eb"
+      routeAliases: [my-relay, company-llm]
+      modelVendors: [deepseek, qwen]
+
+    # Restricted public HTTPS JSON account endpoint.
+    - id: acme-billing
+      displayName: ACME Billing
+      kind: http-json
+      endpoint: https://billing.example.com/v1/account
+      credentialRef: ACME_API_KEY
+      auth: bearer                 # bearer | x-api-key | none
+      balancePath: data.balance
+      usagePath: data.usage
+      limitPath: data.limit
+      remainingPath: data.remaining
+      currency: USD
+      valueScale: 1
+      routeAliases: [acme, acme-relay]
+
   pricing:
     default:
       inputCacheHitPerMTokCNY: 0
@@ -122,6 +149,14 @@ dsh-quota:
 
 `usageRetentionDays` accepts 30–3650 days and controls the Host ledger retention window. The dashboard queries the latest 30 days by default.
 
+### Custom providers
+
+Use `kind: local` for a relay or private route without an account endpoint. It makes no remote request and attributes DSH Tokens and local prices to that billing provider.
+
+Use `kind: http-json` to map a restricted JSON account endpoint into balance, provider usage, and a spending limit. The four mapping fields are safe dot paths: for `{"data":{"balance":"42.5"}}`, use `balancePath: data.balance`. Configure at least one path. Numeric strings are accepted, and `valueScale` multiplies every mapped value (for example, use `0.001` when the upstream unit is one-thousandth of the configured currency).
+
+`credentialRef` names a DSH Host credential/environment reference; it is never the literal key. Store the same reference through DSH credentials or provide it to the Host environment that starts `dsh web`. Custom IDs can also be used in `providerEnabled` and `routeMappings`. Live Host-settings changes rebuild the registry and provider cards without changing the current Session model.
+
 Prices and budgets are estimates/alerts only: they never block a model call or modify a provider bill. An empty `peakHours.windows` disables time-based discounts. Browser price and budget overrides stay in `localStorage`; model prices take precedence over matching Host prices and neither preference contains credentials.
 
 ## Privacy and security
@@ -132,7 +167,9 @@ Prices and budgets are estimates/alerts only: they never block a model call or m
 - The browser keeps UI preferences, local price/budget overrides, and a compatibility aggregate mirror; message content is never persisted by this plugin.
 - Provider API responses and quota snapshots are recursively redacted; usage responses are emitted only from a closed, validated numeric ledger shape.
 - Write routes require JSON and validate Host, Origin, and `Sec-Fetch-Site`.
-- Arbitrary custom URLs with bearer tokens are intentionally unsupported to avoid an SSRF and credential-exfiltration surface.
+- Custom account endpoints are restricted to public HTTPS GET on port 443, without query strings, redirects, embedded credentials, private/reserved addresses, or arbitrary headers.
+- The Host validates every DNS result and pins the TLS connection to a validated address, caps responses at 256 KiB, and permits only Bearer, `X-API-Key`, or no authentication.
+- The plugin's quota APIs return normalized numbers and safe metadata only—not endpoint configuration, raw responses, or keys.
 
 Please report security issues privately as described in [SECURITY.md](SECURITY.md).
 

@@ -6,7 +6,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/Node.js-%3E%3D22-43853d.svg)](package.json)
 
-DSH Web 的多平台额度、余额、Token 成本与路由诊断中心。当前版本为 `0.7.0`。
+DSH Web 的多平台额度、余额、Token 成本与路由诊断中心。当前版本为 `0.8.0`。
 
 插件直接跟随 DeepSeek HARNESS 的当前 `Session` 和该会话的模型选择，区分“模型厂商”和“实际计费平台”。例如会话通过 OpenRouter 使用 MiniMax 模型时，额度仍归到 OpenRouter，不会误查 MiniMax。
 
@@ -32,9 +32,10 @@ DSH Web 的多平台额度、余额、Token 成本与路由诊断中心。当前
 - 自动与固定模式：默认跟随会话，也可固定查看某个平台；固定查看不会修改会话模型。
 - 缓存与容错：GET 使用可配置 TTL，手动刷新强制请求；并发请求合并；失败时保留上一次健康快照。
 - 安全边界：凭据只在 Host 解析，响应递归脱敏；写请求要求 JSON；插件路由校验 Host、Origin 和 `Sec-Fetch-Site`。
+- 自定义平台：可通过 Host 设置添加本地计费路由，或映射第三方公共 HTTPS JSON 余额/用量接口；平台卡片和会话路由会自动接入。
 - 中英文界面：侧边栏状态入口、总览/用量/平台/设置四个页签、桌面抽屉、移动端底部面板和深浅色适配。
 
-## 支持的平台（11 个）
+## 支持的平台（11 个内置 + 自定义）
 
 原生账户查询：
 
@@ -46,7 +47,7 @@ DSH Web 的多平台额度、余额、Token 成本与路由诊断中心。当前
 | `openrouter` | 当前 Key 用量、消费限额、剩余额度和重置周期 | `OPENROUTER_API_KEY` 或 `OPENROUTER_KEY` |
 | `siliconflow` | SiliconFlow 充值余额、赠送余额和总余额 | `SILICONFLOW_API_KEY` 或 `SILICONFLOW_KEY` |
 
-上表只列有可验证账户/Key 查询接口的平台。新增平台可通过实现一个 `QuotaAdapter` 并注册元数据接入，无需修改 UI 和路由主流程。
+上表只列有可验证账户/Key 查询接口的平台。除此之外，可以通过 `customProviders` 添加自己的平台，无需修改插件源码、UI 或路由主流程。
 
 本地 Token/费用归集（不请求平台账户接口、不需要额外凭据）：
 
@@ -66,14 +67,14 @@ DSH Web 的多平台额度、余额、Token 成本与路由诊断中心。当前
 推荐把预构建的 Release 安装到 DSH Web profile，然后重启 DSH Web：
 
 ```bash
-dsh plugin --profile web add "https://github.com/Lottle7/dsh-quota/releases/download/v0.7.0/dsh-quota.tgz"
+dsh plugin --profile web add "https://github.com/Lottle7/dsh-quota/releases/download/v0.8.0/dsh-quota.tgz"
 dsh web
 ```
 
 预构建包不需要在本机编译 TypeScript。也可以安装带版本的 GitHub 源码；pnpm 10 或更高版本若提示 `allowBuilds`，请按提示允许该包的构建脚本后重试：
 
 ```bash
-dsh plugin --profile web add "github:Lottle7/dsh-quota#v0.7.0"
+dsh plugin --profile web add "github:Lottle7/dsh-quota#v0.8.0"
 ```
 
 升级时把上述 Release URL 换成新版本；卸载使用：
@@ -107,7 +108,7 @@ dsh plugin --profile web add .
 
 - **总览**：当前计费平台的余额/额度窗口，以及今日费用、Token、缓存命中和平台连接摘要。
 - **用量**：当前会话、今日、近 30 天、Host 历史同步、连续 7 日图表、平台/模型排行、明细筛选/分页和 CSV 导出。
-- **平台**：查看 5 个原生查询平台和 6 个本地计费平台，并在不修改会话模型的前提下固定查看。
+- **平台**：查看全部内置及自定义平台，并在不修改会话模型的前提下固定查看；自定义平台会标注“自定义”。
 - **设置**：切换悬浮迷你面板/图标/关闭并重置位置，编辑每日/30 天费用预算和模型本地价格，检查路由解析链路，复制脱敏诊断和导出用量。
 
 悬浮仪表盘的位置和显示模式保存在当前浏览器，不会同步到 Host，也不会包含凭据。完整额度中心打开时，悬浮仪表盘会自动隐藏，关闭抽屉后恢复。
@@ -141,6 +142,32 @@ dsh-quota:
     together: true
     fireworks: true
 
+  # 自定义本地计费平台：只归集 DSH Token/价格，不访问远端。
+  customProviders:
+    - id: my-company-relay
+      displayName: My Company Relay
+      kind: local
+      description: 公司内部模型网关
+      region: CN
+      brandColor: "#2563eb"
+      routeAliases: [my-relay, company-llm]
+      modelVendors: [deepseek, qwen]
+
+    # 自定义账户接口：只允许公共 HTTPS GET，凭据值不写在这里。
+    - id: acme-billing
+      displayName: ACME Billing
+      kind: http-json
+      endpoint: https://billing.example.com/v1/account
+      credentialRef: ACME_API_KEY
+      auth: bearer                 # bearer | x-api-key | none
+      balancePath: data.balance
+      usagePath: data.usage
+      limitPath: data.limit
+      remainingPath: data.remaining
+      currency: USD
+      valueScale: 1
+      routeAliases: [acme, acme-relay]
+
   # 非 loopback 访问 Web UI 时必须显式信任 authority；有端口就一并填写。
   trustedHosts:
     - 192.168.1.20:13521
@@ -158,6 +185,14 @@ dsh-quota:
 ```
 
 `usageRetentionDays` 控制 Host 用量账本保留天数；界面默认查询最近 30 天。
+
+### 自定义第三方平台
+
+`kind: local` 适合没有账户查询接口的中转站或私有路由：它不需要端点和凭据，只把当前会话的 Token、价格与费用归到该平台。
+
+`kind: http-json` 会把一个受限的 JSON 账户接口映射成余额、平台用量和消费限额。`balancePath`、`usagePath`、`limitPath`、`remainingPath` 是点分 JSON 路径，例如响应 `{"data":{"balance":"42.5"}}` 对应 `data.balance`。这些字段至少配置一个；数字或数字字符串均可。`valueScale` 会乘到所有映射值上，例如上游以千分之一美元为单位时填 `0.001`。
+
+`credentialRef` 是 DSH Host 凭据引用/环境变量名，不是密钥本身。请通过 DSH 凭据存储或启动 `dsh web` 的 Host 环境提供同名值，例如 `ACME_API_KEY`；不要把真实 Token 写进 YAML。设置更新后，平台注册表、路由别名、开关和平台卡片会一起刷新。自定义平台也可出现在 `providerEnabled` 和 `routeMappings` 中。
 
 价格表与预算只用于浏览器本地估算和提醒，不会阻止模型调用或改变任何平台账单。若 `peakHours.windows` 为空，则表示不启用分时价格，插件会原样使用配置价格；只有显式配置峰时窗口时，窗口之外才采用 50% 折扣。
 
@@ -180,7 +215,9 @@ dsh-quota:
 - 平台 API 响应和 `QuotaSnapshot` 在存储及出站前递归脱敏；用量接口只从封闭校验过的数值账本结构生成响应。
 - 自动刷新走缓存，避免高频调用上游；点击刷新才强制请求。
 - `0.0.0.0` 暴露是 DSH Web Server 的部署选择。若从局域网访问，需要在 `trustedHosts` 明确列出浏览器使用的 authority，并由反向代理承担 TLS/认证。
-- 插件不支持任意自定义 URL + Bearer Token，避免把通用配置变成 SSRF/凭据外传入口。
+- 自定义账户接口只允许公共 `https://`、443 端口、无查询参数的 GET；禁止私网/loopback/保留地址、重定向、URL 内嵌凭据和任意请求头。
+- Host 会校验全部 DNS 结果并把 TLS 连接固定到已校验地址，限制响应为 256 KiB；认证只允许 Bearer、`X-API-Key` 或无认证，字段映射只能读取安全的点分路径。
+- `credentialRef` 只能引用 Host 凭据；插件的额度 API 只返回归一化数字和安全元数据，不会返回端点配置、原始响应或密钥。
 
 ## 常见问题
 

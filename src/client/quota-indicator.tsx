@@ -4,6 +4,7 @@ import { t } from "./i18n.ts"
 
 export interface QuotaIndicatorProps {
   snapshot: QuotaSnapshot | null
+  brandColor?: string
   onOpenPanel(): void
   loading: boolean
   manual: boolean
@@ -12,7 +13,7 @@ export interface QuotaIndicatorProps {
   open: boolean
 }
 
-export function QuotaIndicator({ snapshot, onOpenPanel, loading, manual, locale, wide, open }: QuotaIndicatorProps) {
+export function QuotaIndicator({ snapshot, brandColor, onOpenPanel, loading, manual, locale, wide, open }: QuotaIndicatorProps) {
   const status = snapshot?.status ?? "unsupported"
   const metric = snapshot === null ? "—" : compactMetric(snapshot, locale)
   const provider = snapshot?.providerDisplayName.replace(/\s+(Official|Global|China)$/i, "") ?? "Quota"
@@ -25,7 +26,7 @@ export function QuotaIndicator({ snapshot, onOpenPanel, loading, manual, locale,
       title={description}
       aria-label={description}
       aria-pressed={open}
-      style={{ "--q-provider": providerColor(snapshot?.providerId) } as CSSProperties}
+      style={{ "--q-provider": brandColor ?? providerColor(snapshot?.providerId) } as CSSProperties}
     >
       <span className="dsh-quota-sidebar-icon" aria-hidden="true">
         {loading ? <span className="dsh-quota-spinner" /> : <GaugeIcon />}

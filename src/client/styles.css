@@ -586,6 +586,8 @@ body[data-ds-dark-theme] .dsh-quota-floating.is-card { box-shadow: 0 16px 46px r
 .dsh-quota-floating-settings-copy { display: flex; align-items: flex-end; gap: 14px; margin-top: 10px; }
 .dsh-quota-floating-settings-copy p { flex: 1; margin: 0; color: var(--q-text-3); font-size: 9px; line-height: 1.5; }
 .dsh-quota-floating-settings-copy button { flex: 0 0 auto; }
+.dsh-quota-host-settings-note { padding: 11px 12px; border: 1px solid color-mix(in srgb, var(--q-provider) 16%, var(--q-line)); border-radius: 11px; background: color-mix(in srgb, var(--q-provider) 4%, var(--q-surface)); }
+.dsh-quota-host-settings-note p { margin: 0; color: var(--q-text-3); font-size: 9px; line-height: 1.55; }
 .dsh-quota-field { min-width: 0; display: flex; flex-direction: column; gap: 5px; }
 .dsh-quota-field > span { color: var(--q-text-3); font-size: 8.5px; font-weight: 620; }
 .dsh-quota-field input { box-sizing: border-box; width: 100%; height: 34px; padding: 0 9px; border: 1px solid var(--q-line-strong); border-radius: 9px; outline: none; background: var(--q-surface-2); color: var(--q-text); font: 11px/1 var(--q-font); font-variant-numeric: tabular-nums; }

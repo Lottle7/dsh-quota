@@ -175,7 +175,8 @@ export function QuotaPanel(props: QuotaPanelProps) {
 
 function PanelHeader(props: QuotaPanelProps) {
   const snapshot = props.snapshot
-  const color = providerColor(snapshot?.providerId)
+  const color = props.providers.find((item) => item.id === snapshot?.providerId)?.brandColor
+    ?? providerColor(snapshot?.providerId)
   return (
     <header className="dsh-quota-header" style={{ "--q-provider": color } as CSSProperties}>
       <div className="dsh-quota-provider-logo" aria-hidden="true">
@@ -647,6 +648,7 @@ function ProvidersView(props: QuotaPanelProps) {
               </span>
               <span className="dsh-quota-provider-capabilities">
                 {provider.region !== undefined ? <em>{provider.region}</em> : null}
+                {provider.custom === true ? <em>{copy(props.locale, "自定义", "Custom")}</em> : null}
                 {provider.capabilities?.balance === true ? <em>{t(props.locale, "balance")}</em> : null}
                 {provider.capabilities?.quota === true ? <em>{localeQuota(props.locale)}</em> : null}
                 {localOnly ? <em>{t(props.locale, "localTracking")}</em> : null}
@@ -763,6 +765,7 @@ function SettingsView(props: QuotaPanelProps) {
   const schedule = props.pricing.peakHours.windows.length === 0
     ? copy(props.locale, "未启用分时折扣", "Time-of-day discount disabled")
     : `${props.pricing.peakHours.timezone} · ${props.pricing.peakHours.windows.map((item) => `${item.start}–${item.end}`).join(", ")}`
+  const customProviderCount = props.providers.filter((provider) => provider.custom === true).length
   return (
     <div className="dsh-quota-view dsh-quota-settings-view">
       <PanelSection title={copy(props.locale, "悬浮仪表盘", "Floating dashboard")} subtitle={copy(props.locale, "随时查看当前会话用量", "Keep current-session usage visible")}>
@@ -780,6 +783,19 @@ function SettingsView(props: QuotaPanelProps) {
             <p>{copy(props.locale, "迷你面板会显示平台、模型、会话 Token、估算费用与缓存命中；拖动顶部把手即可改变位置。", "The mini card shows provider, model, session tokens, estimated cost and cache hit. Drag its top handle to move it.")}</p>
             <button type="button" className="dsh-quota-secondary-button" onClick={props.onResetFloatingPosition}>{copy(props.locale, "恢复默认位置", "Reset position")}</button>
           </div>
+        </div>
+      </PanelSection>
+
+      <PanelSection
+        title={copy(props.locale, "自定义第三方平台", "Custom third-party providers")}
+        subtitle={copy(props.locale, `Host 已加载 ${customProviderCount} 个`, `${customProviderCount} loaded by the Host`)}
+      >
+        <div className="dsh-quota-host-settings-note">
+          <p>{copy(
+            props.locale,
+            "可在 dsh-quota Host 设置的 customProviders 中添加本地计费平台或 HTTPS JSON 余额接口。密钥始终由 Host 凭据服务解析，额度接口不会返回密钥或上游原始响应。",
+            "Add local-accounting routes or HTTPS JSON balance endpoints under customProviders in the dsh-quota Host settings. Keys are always resolved by the Host credential service; quota APIs return neither keys nor raw upstream responses.",
+          )}</p>
         </div>
       </PanelSection>
 
@@ -869,7 +885,7 @@ async function copyDiagnostics(props: QuotaPanelProps, setFeedback: (value: stri
     stale: props.snapshot?.stale ?? false,
     budgets: props.budgetPreferences,
     refreshIntervalMs: props.refreshIntervalMs,
-    providers: props.providers.map((item) => ({ id: item.id, configured: item.configured, enabled: item.supported, status: item.status ?? null })),
+    providers: props.providers.map((item) => ({ id: item.id, custom: item.custom === true, configured: item.configured, enabled: item.supported, status: item.status ?? null })),
   }
   try {
     await navigator.clipboard.writeText(JSON.stringify(report, null, 2))

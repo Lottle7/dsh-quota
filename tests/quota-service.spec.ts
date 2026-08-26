@@ -164,6 +164,40 @@ test('invalidate clears cache and credentials/updated-equivalent triggers refres
   assert.equal(service.cached('deepseek-official'), undefined)
 })
 
+test('invalidate isolates a replacement provider from an older in-flight response', async () => {
+  const creds = fakeCreds()
+  const registry = buildRegistry()
+  const provider = registry.get('deepseek-official')!
+  let calls = 0
+  let releaseFirst!: () => void
+  const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve })
+  provider.adapter = {
+    ...provider.adapter,
+    async fetch() {
+      calls++
+      const call = calls
+      if (call === 1) await firstGate
+      return {
+        providerId: 'deepseek-official',
+        providerDisplayName: 'DeepSeek Official',
+        status: 'ok',
+        balances: [{ currency: 'CNY', total: call }],
+        fetchedAt: new Date().toISOString(),
+        capabilities: { balance: true, quota: false },
+      }
+    },
+  }
+  const service = new QuotaService(registry, creds, { cacheTtlMs: 60_000 })
+  const oldRefresh = service.refresh('deepseek-official')
+  while (calls === 0) await new Promise((resolve) => setImmediate(resolve))
+  service.invalidate('deepseek-official')
+  const replacement = await service.refresh('deepseek-official')
+  assert.equal(replacement.balances?.[0].total, 2)
+  releaseFirst()
+  await oldRefresh
+  assert.equal(service.cached('deepseek-official')?.balances?.[0].total, 2)
+})
+
 test('Backoff escalates on consecutive errors but resets on success', async () => {
   const creds = fakeCreds()
   let calls = 0

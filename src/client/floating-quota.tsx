@@ -20,6 +20,7 @@ type Locale = "zh-CN" | "en-US"
 
 export interface FloatingQuotaProps {
   snapshot: QuotaSnapshot | null
+  brandColor?: string
   currentModel: string | null
   currentTokens: TokenUsageTotals
   usageToday: UsageAggregate
@@ -128,7 +129,7 @@ export function FloatingQuota(props: FloatingQuotaProps) {
     ? "exhausted"
     : budget?.level === "warning" ? "warning" : status
   const style = {
-    "--q-provider": providerColor(props.snapshot?.providerId),
+    "--q-provider": props.brandColor ?? providerColor(props.snapshot?.providerId),
     ...(position === null ? {} : { left: position.x, top: position.y, right: "auto", bottom: "auto" }),
   } as CSSProperties
   const title = `${provider} · ${model} · ${formatCount(total)} tok${budget === null ? "" : ` · ${budgetTitle(budget, props.locale)}`}`

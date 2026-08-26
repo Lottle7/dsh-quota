@@ -15,6 +15,9 @@ const shared = {
       '@deepseek-ai/dsh-settings',
       '@deepseek-ai/schemastery',
       'zod',
+      'node:dns/promises',
+      'node:https',
+      'node:net',
     ],
   },
 } as const

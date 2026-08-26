@@ -27,6 +27,7 @@ export interface ProviderRecord extends RegisteredProvider {
   website?: string
   brandColor?: string
   capabilities?: import("../shared/types.ts").ProviderCapabilities
+  custom?: boolean
 }
 
 export interface RegistryCredentialProbe {
@@ -47,6 +48,15 @@ export class ProviderRegistry {
     }
     this.records.set(record.id, record)
     this.order.push(record.id)
+  }
+
+  /** Remove a provider and its stable list position. Used for live settings reloads. */
+  unregister(id: ProviderId): boolean {
+    const removed = this.records.delete(id)
+    if (!removed) return false
+    const index = this.order.indexOf(id)
+    if (index >= 0) this.order.splice(index, 1)
+    return true
   }
 
   has(id: ProviderId): boolean {
@@ -82,6 +92,7 @@ export class ProviderRegistry {
         website: r.website,
         brandColor: r.brandColor,
         capabilities: r.capabilities,
+        custom: r.custom,
         configured,
         supported: r.enabled && r.adapter.supported,
         status: status?.status(r.id),

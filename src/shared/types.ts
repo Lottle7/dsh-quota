@@ -117,6 +117,8 @@ export interface ProviderListItem {
   website?: string
   brandColor?: string
   capabilities?: ProviderCapabilities
+  /** True when the provider was supplied through dsh-quota Host settings. */
+  custom?: boolean
   /** Whether the user has a credential for at least one of the adapter's refs. */
   configured: boolean
   /** Whether the adapter is enabled in plugin settings. */
