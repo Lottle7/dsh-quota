@@ -1,6 +1,13 @@
 import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react"
 import type { QuotaSnapshot } from "../shared/types.ts"
 import type { PricingTable, TokenUsageTotals } from "../shared/usage.ts"
+import type { UsageAggregate } from "./usage-store.ts"
+import {
+  evaluateBudgets,
+  strongestBudgetEvaluation,
+  type BudgetEvaluation,
+  type BudgetPreferences,
+} from "./budget-preferences.ts"
 import { formatCacheHitPercent, formatCount, formatCNY } from "./format.ts"
 import {
   clampFloatingPosition,
@@ -15,10 +22,13 @@ export interface FloatingQuotaProps {
   snapshot: QuotaSnapshot | null
   currentModel: string | null
   currentTokens: TokenUsageTotals
+  usageToday: UsageAggregate
+  usageRolling30Day: UsageAggregate
   pricing: PricingTable
   loading: boolean
   locale: Locale
   preferences: FloatingPreferences
+  budgetPreferences: BudgetPreferences
   panelOpen: boolean
   onPreferencesChange(preferences: FloatingPreferences): void
   onOpenPanel(): void
@@ -109,15 +119,23 @@ export function FloatingQuota(props: FloatingQuotaProps) {
   const resolved = props.currentModel === null ? null : resolvePriceAt(props.currentModel, props.pricing, Date.now()).prices
   const hasPrice = resolved !== null && Object.values(resolved).some((value) => value > 0)
   const cost = resolved === null ? 0 : computeDeltaCost(props.currentTokens, resolved)
+  const budget = strongestBudgetEvaluation(evaluateBudgets(
+    props.usageToday,
+    props.usageRolling30Day,
+    props.budgetPreferences,
+  ))
+  const visualStatus = budget?.level === "exceeded"
+    ? "exhausted"
+    : budget?.level === "warning" ? "warning" : status
   const style = {
     "--q-provider": providerColor(props.snapshot?.providerId),
     ...(position === null ? {} : { left: position.x, top: position.y, right: "auto", bottom: "auto" }),
   } as CSSProperties
-  const title = `${provider} · ${model} · ${formatCount(total)} tok`
+  const title = `${provider} · ${model} · ${formatCount(total)} tok${budget === null ? "" : ` · ${budgetTitle(budget, props.locale)}`}`
 
   if (props.preferences.mode === "icon") {
     return (
-      <aside ref={rootRef} className={`dsh-quota-floating is-icon is-${status}`} style={style} aria-label={title}>
+      <aside ref={rootRef} className={`dsh-quota-floating is-icon is-${visualStatus}`} style={style} aria-label={title}>
         <button
           type="button"
           className="dsh-quota-floating-orb"
@@ -127,16 +145,16 @@ export function FloatingQuota(props: FloatingQuotaProps) {
           aria-label={title}
         >
           {props.loading ? <span className="dsh-quota-spinner" /> : <GaugeIcon />}
-          <i className={`is-${status}`} />
+          <i className={`is-${visualStatus}`} />
         </button>
       </aside>
     )
   }
 
   return (
-    <aside ref={rootRef} className={`dsh-quota-floating is-card is-${status}`} style={style} aria-label={title}>
+    <aside ref={rootRef} className={`dsh-quota-floating is-card is-${visualStatus}`} style={style} aria-label={title}>
       <header className="dsh-quota-floating-header">
-        <span className={`dsh-quota-floating-status is-${status}`} aria-hidden="true" />
+        <span className={`dsh-quota-floating-status is-${visualStatus}`} aria-hidden="true" />
         <div className="dsh-quota-floating-heading">
           <strong title={provider}>{provider}</strong>
           <small title={model}>{model}</small>
@@ -169,12 +187,41 @@ export function FloatingQuota(props: FloatingQuotaProps) {
         <span><small>{copy(props.locale, "缓存命中", "Cache hit")}</small><strong>{formatCacheHitPercent(props.currentTokens.cacheReadTokens, input)}</strong></span>
         <i aria-hidden="true"><ChevronIcon /></i>
       </button>
+      {budget !== null ? (
+        <div className={`dsh-quota-floating-budget is-${budget.level}`}>
+          <span>{budgetScopeLabel(budget, props.locale)}</span>
+          <strong>{budget.level === "unpriced" ? copy(props.locale, "缺少价格", "No pricing") : `${Math.round(budget.ratio * 100)}%`}</strong>
+          <i aria-hidden="true"><b style={{ width: `${Math.min(100, Math.max(0, budget.ratio * 100))}%` }} /></i>
+        </div>
+      ) : null}
       <footer className="dsh-quota-floating-footer">
-        <span>{props.loading ? copy(props.locale, "刷新中", "Refreshing") : statusText(status, props.locale)}</span>
+        <span>{props.loading ? copy(props.locale, "刷新中", "Refreshing") : budgetStatusText(budget, status, props.locale)}</span>
         <span>{copy(props.locale, "点击查看详情", "Open details")}</span>
       </footer>
     </aside>
   )
+}
+
+function budgetScopeLabel(value: BudgetEvaluation, locale: Locale): string {
+  return value.scope === "daily"
+    ? copy(locale, "今日预算", "Daily budget")
+    : copy(locale, "30 天预算", "30-day budget")
+}
+
+function budgetTitle(value: BudgetEvaluation, locale: Locale): string {
+  if (value.level === "unpriced") return `${budgetScopeLabel(value, locale)} ${copy(locale, "缺少价格", "needs pricing")}`
+  return `${budgetScopeLabel(value, locale)} ${Math.round(value.ratio * 100)}%`
+}
+
+function budgetStatusText(
+  budget: BudgetEvaluation | null,
+  status: QuotaSnapshot["status"],
+  locale: Locale,
+): string {
+  if (budget?.level === "exceeded") return copy(locale, "费用预算已超出", "Cost budget exceeded")
+  if (budget?.level === "warning") return copy(locale, "费用接近预算", "Cost nearing budget")
+  if (budget?.level === "unpriced") return copy(locale, "预算等待价格", "Budget needs pricing")
+  return statusText(status, locale)
 }
 
 function copy(locale: Locale, zh: string, en: string): string {

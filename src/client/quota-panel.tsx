@@ -12,6 +12,13 @@ import type { Mode } from "./store.ts"
 import type { UsageAggregate, UsageBreakdownItem, UsageSeriesPoint } from "./usage-store.ts"
 import { formatCacheHitPercent, formatCount, formatCNY } from "./format.ts"
 import type { FloatingMode } from "./floating-preferences.ts"
+import {
+  DEFAULT_BUDGET_PREFERENCES,
+  evaluateBudgets,
+  strongestBudgetEvaluation,
+  type BudgetEvaluation,
+  type BudgetPreferences,
+} from "./budget-preferences.ts"
 import { computeDeltaCost, resolvePriceAt } from "./pricing.ts"
 import { t } from "./i18n.ts"
 
@@ -50,6 +57,7 @@ export interface QuotaPanelProps {
   warningBalanceBelow: number
   warningQuotaRemainingBelow: number
   floatingMode: FloatingMode
+  budgetPreferences: BudgetPreferences
   onSelectManual(id: string | null): void
   onSetMode(mode: Mode): void
   onRefresh(): void
@@ -58,6 +66,7 @@ export interface QuotaPanelProps {
   onExportUsage(query: UsageLedgerQuery): Promise<Blob>
   onSavePrice(model: string, prices: PriceSet | null): void
   onSetFloatingMode(mode: FloatingMode): void
+  onBudgetPreferencesChange(preferences: BudgetPreferences): void
   onResetFloatingPosition(): void
   onClose(): void
 }
@@ -68,6 +77,11 @@ export function QuotaPanel(props: QuotaPanelProps) {
   const closeRef = useRef(props.onClose)
   closeRef.current = props.onClose
   const snapshot = props.snapshot
+  const budgetAlert = strongestBudgetEvaluation(evaluateBudgets(
+    props.usageToday,
+    props.usageLifetime,
+    props.budgetPreferences,
+  ))
   const brandColor = props.providers.find((item) => item.id === snapshot?.providerId)?.brandColor
     ?? providerColor(snapshot?.providerId)
   useEffect(() => {
@@ -120,6 +134,12 @@ export function QuotaPanel(props: QuotaPanelProps) {
         <div className="dsh-quota-panel-scroll">
           {props.error !== null ? <Notice kind="error" text={props.error} /> : null}
           {snapshot?.stale === true ? <Notice kind="warning" text={t(props.locale, "stale")} /> : null}
+          {budgetAlert !== null && budgetAlert.level !== "ok" ? (
+            <Notice
+              kind={budgetAlert.level === "exceeded" ? "error" : "warning"}
+              text={budgetAlertMessage(budgetAlert, props.locale)}
+            />
+          ) : null}
           {tab === "overview" ? <Overview {...props} /> : null}
           {tab === "usage" ? (
             <UsageView
@@ -138,6 +158,7 @@ export function QuotaPanel(props: QuotaPanelProps) {
               retainedDays={props.usageRetainedDays}
               backfill={props.usageBackfill}
               pricing={props.pricing}
+              budgetPreferences={props.budgetPreferences}
               onSync={props.onSyncUsage}
               onQuery={props.onQueryUsage}
               onExport={props.onExportUsage}
@@ -205,8 +226,17 @@ function Overview(props: QuotaPanelProps) {
       <PulseMetric label={copy(locale, "可用平台", "Available")} value={`${props.providers.filter((item) => item.configured && item.supported).length}/${props.providers.length}`} />
     </section>
   )
+  const budget = (
+    <BudgetSummary
+      today={props.usageToday}
+      rolling30Day={props.usageLifetime}
+      preferences={props.budgetPreferences}
+      locale={locale}
+      compact
+    />
+  )
   if (snapshot === null || snapshot.providerId === "unknown") {
-    return <div className="dsh-quota-view dsh-quota-overview">{pulse}<EmptyState locale={locale} message={snapshot?.message} /></div>
+    return <div className="dsh-quota-view dsh-quota-overview">{pulse}{budget}<EmptyState locale={locale} message={snapshot?.message} /></div>
   }
   const quota = primaryQuota(snapshot)
   const balance = snapshot.balances?.[0]
@@ -232,6 +262,7 @@ function Overview(props: QuotaPanelProps) {
         <QuotaRing percent={localOnly ? null : percentage} status={snapshot.status} />
       </section>
       {pulse}
+      {budget}
       <CapabilityRow snapshot={snapshot} locale={locale} />
       {(snapshot.balances?.length ?? 0) > 0 ? (
         <PanelSection title={t(locale, "balance")}>
@@ -278,6 +309,7 @@ function UsageView(props: {
   retainedDays: number
   backfill: UsageBackfillState
   pricing: PricingTable
+  budgetPreferences: BudgetPreferences
   onSync(): Promise<void>
   onQuery(query: UsageLedgerQuery): Promise<UsageLedgerResponse>
   onExport(query: UsageLedgerQuery): Promise<Blob>
@@ -394,6 +426,12 @@ function UsageView(props: {
       </PanelSection>
       <UsageAggregateCard title={t(props.locale, "today")} value={props.today} locale={props.locale} prominent />
       <UsageAggregateCard title={t(props.locale, "lifetime")} value={props.lifetime} locale={props.locale} />
+      <BudgetSummary
+        today={props.today}
+        rolling30Day={props.lifetime}
+        preferences={props.budgetPreferences}
+        locale={props.locale}
+      />
       <PanelSection title={copy(props.locale, "近 7 天趋势", "7-day trend")}>
         <UsageTrend series={props.series} locale={props.locale} />
       </PanelSection>
@@ -622,6 +660,77 @@ function ProvidersView(props: QuotaPanelProps) {
   )
 }
 
+function BudgetEditor(props: {
+  preferences: BudgetPreferences
+  locale: Locale
+  onChange(preferences: BudgetPreferences): void
+}) {
+  const [daily, setDaily] = useState(props.preferences.dailyCostLimitCNY?.toString() ?? "")
+  const [rolling, setRolling] = useState(props.preferences.rolling30DayCostLimitCNY?.toString() ?? "")
+  const [warning, setWarning] = useState(String(Math.round(props.preferences.warningRatio * 100)))
+  const [feedback, setFeedback] = useState("")
+  useEffect(() => {
+    setDaily(props.preferences.dailyCostLimitCNY?.toString() ?? "")
+    setRolling(props.preferences.rolling30DayCostLimitCNY?.toString() ?? "")
+    setWarning(String(Math.round(props.preferences.warningRatio * 100)))
+  }, [props.preferences])
+  const dailyValue = optionalPositiveNumber(daily)
+  const rollingValue = optionalPositiveNumber(rolling)
+  const warningValue = Number(warning)
+  const valid = dailyValue !== undefined
+    && rollingValue !== undefined
+    && Number.isFinite(warningValue)
+    && warningValue >= 50
+    && warningValue <= 100
+  const save = (): void => {
+    if (!valid) return
+    props.onChange({
+      dailyCostLimitCNY: dailyValue ?? null,
+      rolling30DayCostLimitCNY: rollingValue ?? null,
+      warningRatio: Math.round(warningValue) / 100,
+    })
+    setFeedback(copy(props.locale, "预算告警已保存到当前浏览器", "Budget alerts saved in this browser"))
+  }
+  const reset = (): void => {
+    setDaily("")
+    setRolling("")
+    setWarning(String(DEFAULT_BUDGET_PREFERENCES.warningRatio * 100))
+    props.onChange({ ...DEFAULT_BUDGET_PREFERENCES })
+    setFeedback(copy(props.locale, "预算告警已关闭", "Budget alerts disabled"))
+  }
+  return (
+    <PanelSection title={copy(props.locale, "费用预算与告警", "Cost budgets & alerts")} subtitle={copy(props.locale, "达到阈值时在面板和悬浮卡提醒", "Warn in the panel and floating card") }>
+      <div className="dsh-quota-budget-editor">
+        <div className="dsh-quota-budget-editor-grid">
+          <label className="dsh-quota-field">
+            <span>{copy(props.locale, "每日预算（元）", "Daily budget (CNY)")}</span>
+            <input type="number" min="0" step="0.01" value={daily} onChange={(event) => setDaily(event.target.value)} placeholder={copy(props.locale, "留空关闭", "Blank to disable")} />
+          </label>
+          <label className="dsh-quota-field">
+            <span>{copy(props.locale, "滚动 30 天预算（元）", "Rolling 30-day budget (CNY)")}</span>
+            <input type="number" min="0" step="0.01" value={rolling} onChange={(event) => setRolling(event.target.value)} placeholder={copy(props.locale, "留空关闭", "Blank to disable")} />
+          </label>
+          <label className="dsh-quota-field">
+            <span>{copy(props.locale, "预警比例（50–100%）", "Warning threshold (50–100%)")}</span>
+            <input type="number" min="50" max="100" step="1" value={warning} onChange={(event) => setWarning(event.target.value)} />
+          </label>
+        </div>
+        <div className="dsh-quota-editor-actions">
+          <span className={`dsh-quota-pricing-state${props.preferences.dailyCostLimitCNY !== null || props.preferences.rolling30DayCostLimitCNY !== null ? " is-ready" : ""}`}>
+            {props.preferences.dailyCostLimitCNY !== null || props.preferences.rolling30DayCostLimitCNY !== null
+              ? copy(props.locale, "告警已启用", "Alerts enabled")
+              : copy(props.locale, "告警已关闭", "Alerts disabled")}
+          </span>
+          <button type="button" className="dsh-quota-secondary-button" onClick={reset}>{copy(props.locale, "关闭并重置", "Disable & reset")}</button>
+          <button type="button" className="dsh-quota-primary-button" onClick={save} disabled={!valid}>{copy(props.locale, "保存预算", "Save budgets")}</button>
+        </div>
+        {feedback.length > 0 ? <p className="dsh-quota-inline-feedback" role="status">{feedback}</p> : null}
+        <p className="dsh-quota-section-hint">{copy(props.locale, "预算只用于本地费用提醒；不会限制模型调用，也不会上传或修改平台账单。未配置模型价格时会提示先补充价格。", "Budgets are local alerts only. They never block model calls, upload data, or modify provider bills. Models without pricing are reported explicitly.")}</p>
+      </div>
+    </PanelSection>
+  )
+}
+
 function SettingsView(props: QuotaPanelProps) {
   const [model, setModel] = useState(props.currentModel ?? "")
   const [draft, setDraft] = useState<[string, string, string]>(["0", "0", "0"])
@@ -673,6 +782,12 @@ function SettingsView(props: QuotaPanelProps) {
           </div>
         </div>
       </PanelSection>
+
+      <BudgetEditor
+        preferences={props.budgetPreferences}
+        locale={props.locale}
+        onChange={props.onBudgetPreferencesChange}
+      />
 
       <PanelSection title={copy(props.locale, "模型价格", "Model pricing")} subtitle={copy(props.locale, "人民币 / 百万 Token", "CNY / 1M tokens")}>
         <div className="dsh-quota-price-editor">
@@ -752,6 +867,7 @@ async function copyDiagnostics(props: QuotaPanelProps, setFeedback: (value: stri
     confidence: props.routeConfidence,
     status: props.snapshot?.status ?? null,
     stale: props.snapshot?.stale ?? false,
+    budgets: props.budgetPreferences,
     refreshIntervalMs: props.refreshIntervalMs,
     providers: props.providers.map((item) => ({ id: item.id, configured: item.configured, enabled: item.supported, status: item.status ?? null })),
   }
@@ -767,6 +883,7 @@ function exportUsage(props: QuotaPanelProps): void {
   const data = JSON.stringify({
     exportedAt: new Date().toISOString(),
     range: "30-days",
+    budgets: props.budgetPreferences,
     daily: props.usageSeries,
     breakdown: props.usageBreakdown,
   }, null, 2)
@@ -795,6 +912,73 @@ function ProviderUsage({ snapshot, locale }: { snapshot: QuotaSnapshot; locale: 
       </div>
     </PanelSection>
   )
+}
+
+function BudgetSummary(props: {
+  today: UsageAggregate
+  rolling30Day: UsageAggregate
+  preferences: BudgetPreferences
+  locale: Locale
+  compact?: boolean
+}) {
+  const evaluations = evaluateBudgets(props.today, props.rolling30Day, props.preferences)
+    .filter((item) => item.level !== "disabled")
+  if (evaluations.length === 0) return null
+  return (
+    <section className={`dsh-quota-budget-summary${props.compact === true ? " is-compact" : ""}`} aria-label={copy(props.locale, "费用预算", "Cost budgets")}>
+      <div className="dsh-quota-budget-summary-head">
+        <strong>{copy(props.locale, "费用预算", "Cost budgets")}</strong>
+        <span>{copy(props.locale, `预警 ${Math.round(props.preferences.warningRatio * 100)}%`, `Warn at ${Math.round(props.preferences.warningRatio * 100)}%`)}</span>
+      </div>
+      <div className="dsh-quota-budget-list">
+        {evaluations.map((item) => (
+          <div className={`dsh-quota-budget-row is-${item.level}`} key={item.scope}>
+            <div>
+              <span>{budgetScopeLabel(item, props.locale)}</span>
+              <strong>{item.level === "unpriced" || item.limitCNY === null
+                ? copy(props.locale, "等待模型价格", "Waiting for model pricing")
+                : `${formatCNY(item.spentCNY)} / ${formatCNY(item.limitCNY)}`}</strong>
+            </div>
+            <b>{budgetLevelLabel(item, props.locale)}</b>
+            <i aria-hidden="true"><span style={{ width: `${Math.min(100, Math.max(0, item.ratio * 100))}%` }} /></i>
+          </div>
+        ))}
+      </div>
+    </section>
+  )
+}
+
+function budgetScopeLabel(value: BudgetEvaluation, locale: Locale): string {
+  return value.scope === "daily"
+    ? copy(locale, "今日预算", "Daily budget")
+    : copy(locale, "滚动 30 天预算", "Rolling 30-day budget")
+}
+
+function budgetLevelLabel(value: BudgetEvaluation, locale: Locale): string {
+  if (value.level === "unpriced") return copy(locale, "未配置价格", "No pricing")
+  if (value.level === "exceeded") return copy(locale, `已超出 ${Math.round(value.ratio * 100)}%`, `${Math.round(value.ratio * 100)}% used`)
+  if (value.level === "warning") return copy(locale, `接近上限 ${Math.round(value.ratio * 100)}%`, `${Math.round(value.ratio * 100)}% used`)
+  return copy(locale, `${Math.round(value.ratio * 100)}% 已用`, `${Math.round(value.ratio * 100)}% used`)
+}
+
+function budgetAlertMessage(value: BudgetEvaluation, locale: Locale): string {
+  const scope = budgetScopeLabel(value, locale)
+  if (value.level === "unpriced") {
+    return copy(locale, `${scope}已启用，但当前用量缺少模型价格，无法可靠判断费用。`, `${scope} is enabled, but model pricing is missing so spend cannot be evaluated reliably.`)
+  }
+  if (value.limitCNY === null) return scope
+  if (value.level === "exceeded") {
+    return copy(locale, `${scope}已超出：${formatCNY(value.spentCNY)} / ${formatCNY(value.limitCNY)}。`, `${scope} exceeded: ${formatCNY(value.spentCNY)} / ${formatCNY(value.limitCNY)}.`)
+  }
+  return copy(locale, `${scope}接近上限：已使用 ${Math.round(value.ratio * 100)}%。`, `${scope} is nearing its limit: ${Math.round(value.ratio * 100)}% used.`)
+}
+
+function optionalPositiveNumber(value: string): number | null | undefined {
+  if (value.trim().length === 0 || Number(value) === 0) return null
+  const parsed = Number(value)
+  return Number.isFinite(parsed) && parsed > 0 && parsed <= 1_000_000_000
+    ? Math.round(parsed * 100) / 100
+    : undefined
 }
 
 function UsageAggregateCard({ title, value, locale, prominent = false }: { title: string; value: UsageAggregate; locale: Locale; prominent?: boolean }) {

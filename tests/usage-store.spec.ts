@@ -382,6 +382,39 @@ test('Host summary replaces the mirror with totals independent of the visible le
   store.dispose()
 })
 
+test('aggregates report partial pricing coverage instead of treating known cost as complete', () => {
+  const storage = new MemoryStorage()
+  const now = Date.now()
+  const partial: PricingTable = {
+    default: { inputCacheHitPerMTokCNY: 0, inputCacheMissPerMTokCNY: 0, outputPerMTokCNY: 0 },
+    overrides: {
+      'priced-model': { inputCacheHitPerMTokCNY: 1, inputCacheMissPerMTokCNY: 2, outputPerMTokCNY: 3 },
+    },
+    peakHours: { weekdays: [], windows: [], timezone: 'Asia/Shanghai' },
+  }
+  const store = new UsageStore({ storage, now: nowReturning(now), pricing: partial, reconcileIntervalMs: 0 })
+  store.replaceFromSummary([
+    {
+      date: localDateString(now),
+      billingProvider: 'provider-a',
+      model: 'priced-model',
+      calls: 1,
+      tokens: { uncachedInputTokens: 1_000, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 100 },
+    },
+    {
+      date: localDateString(now),
+      billingProvider: 'provider-b',
+      model: 'unpriced-model',
+      calls: 1,
+      tokens: { uncachedInputTokens: 2_000, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 200 },
+    },
+  ])
+  const result = aggregateLifetime(store.getState(), partial, nowReturning(now))
+  assert.equal(result.hasPricing, true)
+  assert.equal(result.hasUnpricedUsage, true)
+  store.dispose()
+})
+
 test('UsageStore survives a corrupt localStorage value', () => {
   const storage = new MemoryStorage()
   storage.data = 'not json {{'

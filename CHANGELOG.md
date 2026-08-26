@@ -3,6 +3,21 @@
 All notable changes to this project are documented in this file. The project
 follows [Semantic Versioning](https://semver.org/).
 
+## [0.7.0] - 2026-08-26
+
+### Added
+
+- Browser-local daily and rolling 30-day CNY budgets with a configurable 50–100% warning threshold.
+- Budget progress and warning states in Overview, Usage, the floating dashboard and the global panel notice area.
+- Settings editor for enabling, changing or disabling budgets without touching Host configuration or provider bills.
+- Safe budget metadata in diagnostics and summary JSON exports.
+
+### Changed
+
+- Usage aggregates now distinguish complete pricing from partially unpriced model usage.
+- Budget evaluation reports missing prices instead of treating an incomplete zero/partial estimate as safe spend.
+- Provider health remains visible while budget warnings can independently promote the floating dashboard to warning or exceeded state.
+
 ## [0.6.1] - 2026-08-25
 
 ### Added

@@ -51,6 +51,8 @@ export interface UsageAggregate {
    *  contributing model. false = we have tokens but no pricing yet, so
    *  cost is undefined. */
   hasPricing: boolean
+  /** True when at least one contributing model has Tokens but no price. */
+  hasUnpricedUsage: boolean
 }
 
 /** One chronological point used by the in-panel usage chart. */
@@ -75,6 +77,7 @@ export const ZERO_AGGREGATE: UsageAggregate = {
   out: 0,
   costCNY: 0,
   hasPricing: false,
+  hasUnpricedUsage: false,
 }
 
 /** Storage abstraction so we can swap localStorage for an in-memory mock
@@ -297,6 +300,7 @@ function aggregateBucket(
 ): UsageAggregate {
   const agg: UsageAggregate = { ...ZERO_AGGREGATE }
   let hasPricing = false
+  let hasUnpricedUsage = false
   const nowTs = now()
   for (const [model, bucket] of Object.entries(byModel)) {
     agg.inCacheHit += bucket.cacheReadTokens
@@ -308,11 +312,13 @@ function aggregateBucket(
     const live = computeBucketCost(bucket, prices)
     agg.costCNY += live
     // Treat the bucket as priced if the price set has at least one non-zero entry.
-    if (!hasPricing && (prices.inputCacheHitPerMTokCNY > 0 || prices.inputCacheMissPerMTokCNY > 0 || prices.outputPerMTokCNY > 0)) {
-      hasPricing = true
-    }
+    const configured = prices.inputCacheHitPerMTokCNY > 0 || prices.inputCacheMissPerMTokCNY > 0 || prices.outputPerMTokCNY > 0
+    const tokens = bucket.cacheReadTokens + bucket.uncachedInputTokens + bucket.cacheWriteTokens + bucket.outputTokens
+    if (configured) hasPricing = true
+    else if (tokens > 0) hasUnpricedUsage = true
   }
   agg.hasPricing = hasPricing
+  agg.hasUnpricedUsage = hasUnpricedUsage
   return agg
 }
 

@@ -90,6 +90,7 @@ const EMPTY_USAGE: UsageAggregate = {
   out: 0,
   costCNY: 0,
   hasPricing: false,
+  hasUnpricedUsage: false,
 }
 
 const EMPTY_PRICING: PricingTable = {

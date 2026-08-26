@@ -177,6 +177,9 @@ export const PREFERENCES_STORAGE_KEY = "dsh-quota.preferences.v1"
 /** Browser-local position and visibility of the always-on mini dashboard. */
 export const FLOATING_PREFERENCES_STORAGE_KEY = "dsh-quota.floating-preferences.v1"
 
+/** Browser-local cost budget thresholds and warning ratio. */
+export const BUDGET_PREFERENCES_STORAGE_KEY = "dsh-quota.budget-preferences.v1"
+
 /** Browser-local price overrides edited from the quota center. Prices are
  * not credentials, so keeping them in the browser preserves the Host-only
  * secret boundary while making third-party routes useful without YAML edits. */

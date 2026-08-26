@@ -10,7 +10,7 @@
 export const PLUGIN_ID = "dsh-quota"
 
 /** Human-facing package version included in safe diagnostics. */
-export const PLUGIN_VERSION = "0.6.1"
+export const PLUGIN_VERSION = "0.7.0"
 
 /** Settings namespace owned by this plugin (lowercase kebab-case). */
 export const SETTINGS_NAMESPACE = "dsh-quota"

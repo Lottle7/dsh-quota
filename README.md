@@ -18,14 +18,14 @@ Multi-provider quota, balance, and Token-cost dashboard for **DeepSeek Harness (
 Install the prebuilt release into the DSH Web profile, then restart DSH Web:
 
 ```bash
-dsh plugin --profile web add "https://github.com/Lottle7/dsh-quota/releases/download/v0.6.1/dsh-quota.tgz"
+dsh plugin --profile web add "https://github.com/Lottle7/dsh-quota/releases/download/v0.7.0/dsh-quota.tgz"
 dsh web
 ```
 
 The prebuilt archive does not require a local TypeScript build. To install the tagged source instead, use the command below and follow pnpm's `allowBuilds` prompt if pnpm 10 or later asks for it:
 
 ```bash
-dsh plugin --profile web add "github:Lottle7/dsh-quota#v0.6.1"
+dsh plugin --profile web add "github:Lottle7/dsh-quota#v0.7.0"
 ```
 
 ## Highlights
@@ -38,6 +38,8 @@ dsh plugin --profile web add "github:Lottle7/dsh-quota#v0.6.1"
 - Migrates the pre-v0.6 browser aggregates as uncovered remainders, so upgrades preserve history without double-counting Session logs.
 - Shows historical-sync progress and pageable call-level model, route, Token, cost, time, turn, and step details.
 - Filters call history by billing provider, exact model, source or search text, and exports every matching row as CSV.
+- Supports browser-local daily and rolling 30-day CNY budgets with a configurable warning threshold and progress in the drawer and floating dashboard.
+- Detects partially unpriced usage and asks for missing model prices instead of presenting an incomplete estimate as safe.
 - Displays a gap-free seven-day trend and a 30-day provider/model breakdown, with summary JSON export.
 - Lets you edit per-model CNY-per-million-Token prices in the browser and restore Host defaults at any time.
 - Explains route resolution, billing provider, model vendor, confidence, and cache state in a credential-free diagnostic report.
@@ -73,7 +75,7 @@ Local-accounting integrations never invent a balance. They report only the Token
 - **Overview** — active billing-platform balance/quota, today's Token cost and connection summary.
 - **Usage** — Session, today and 30-day totals, Host history sync, seven-day chart, provider/model rankings, filtered call history, pagination, and CSV export.
 - **Providers** — inspect all 11 integrations or pin one for viewing without changing the Session model.
-- **Settings** — control the floating widget, edit local prices, inspect route resolution, copy diagnostics, and export usage.
+- **Settings** — control the floating widget, edit cost budgets and local prices, inspect route resolution, copy diagnostics, and export usage.
 
 The floating widget's mode and position are browser-local. It temporarily yields while the full quota center is open and returns when the drawer closes.
 
@@ -120,14 +122,14 @@ dsh-quota:
 
 `usageRetentionDays` accepts 30–3650 days and controls the Host ledger retention window. The dashboard queries the latest 30 days by default.
 
-Prices are estimates only and never modify a provider bill. An empty `peakHours.windows` disables time-based discounts. Browser price overrides stay in `localStorage`, take precedence over the matching Host model price, and contain no credentials.
+Prices and budgets are estimates/alerts only: they never block a model call or modify a provider bill. An empty `peakHours.windows` disables time-based discounts. Browser price and budget overrides stay in `localStorage`; model prices take precedence over matching Host prices and neither preference contains credentials.
 
 ## Privacy and security
 
 - API keys and cookies are resolved only through the DSH Host credential service.
 - Credentials are not sent to the browser, stored in the usage ledger, or included in diagnostics.
 - The Host ledger stores only Session identity, turn/step, timestamp, route/model, and Token buckets in DSH's storage domain; it never stores prompts, replies, tool payloads, API keys, or cookies.
-- The browser keeps UI preferences, local price overrides, and a compatibility aggregate mirror; message content is never persisted by this plugin.
+- The browser keeps UI preferences, local price/budget overrides, and a compatibility aggregate mirror; message content is never persisted by this plugin.
 - Provider API responses and quota snapshots are recursively redacted; usage responses are emitted only from a closed, validated numeric ledger shape.
 - Write routes require JSON and validate Host, Origin, and `Sec-Fetch-Site`.
 - Arbitrary custom URLs with bearer tokens are intentionally unsupported to avoid an SSRF and credential-exfiltration surface.

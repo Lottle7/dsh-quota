@@ -1,6 +1,6 @@
 {
   "name": "dsh-quota",
-  "version": "0.6.1",
+  "version": "0.7.0",
   "description": "Multi-provider quota, balance and Token-cost dashboard for DeepSeek Harness Web, with a draggable widget, usage analytics, local pricing and route diagnostics.",
   "type": "module",
   "main": "lib/index.js",

@@ -7,6 +7,11 @@ import { QuotaIndicator } from "./quota-indicator.tsx"
 import { QuotaPanel } from "./quota-panel.tsx"
 import { FloatingQuota } from "./floating-quota.tsx"
 import {
+  readBudgetPreferences,
+  writeBudgetPreferences,
+  type BudgetPreferences,
+} from "./budget-preferences.ts"
+import {
   readFloatingPreferences,
   writeFloatingPreferences,
   type FloatingPreferences,
@@ -324,9 +329,14 @@ export function apply(ctx: QuotaClientContext): void {
     ctx.slots.register({ name: "shell.overlay", id: "dsh-quota-overlay", order: 50 }, function QuotaOverlay() {
       const state = useStateSync(store)
       const [floating, setFloating] = useState<FloatingPreferences>(() => readFloatingPreferences())
+      const [budget, setBudget] = useState<BudgetPreferences>(() => readBudgetPreferences())
       const updateFloating = (next: FloatingPreferences): void => {
         setFloating(next)
         writeFloatingPreferences(next)
+      }
+      const updateBudget = (next: BudgetPreferences): void => {
+        setBudget(next)
+        writeBudgetPreferences(next)
       }
       return (
         <>
@@ -334,10 +344,13 @@ export function apply(ctx: QuotaClientContext): void {
             snapshot={state.snapshot}
             currentModel={state.currentModel}
             currentTokens={state.currentTokens}
+            usageToday={state.usageToday}
+            usageRolling30Day={state.usageLifetime}
             pricing={state.pricing}
             loading={state.loading}
             locale={state.locale}
             preferences={floating}
+            budgetPreferences={budget}
             panelOpen={state.panelOpen}
             onPreferencesChange={updateFloating}
             onOpenPanel={() => {
@@ -349,6 +362,7 @@ export function apply(ctx: QuotaClientContext): void {
             <QuotaPanel
               {...state}
               floatingMode={floating.mode}
+              budgetPreferences={budget}
               onSelectManual={(id) => store.actions.setManual(id)}
               onSetMode={(mode) => store.actions.setMode(mode)}
               onRefresh={() => store.actions.refreshNow(state.mode === "manual" ? state.manualId ?? undefined : undefined, true)}
@@ -357,6 +371,7 @@ export function apply(ctx: QuotaClientContext): void {
               onExportUsage={(query) => api.exportUsageCsv({ days: 30, ...query })}
               onSavePrice={saveLocalPrice}
               onSetFloatingMode={(mode) => updateFloating({ ...floating, mode })}
+              onBudgetPreferencesChange={updateBudget}
               onResetFloatingPosition={() => updateFloating({ ...floating, position: null })}
               onClose={() => store.actions.setPanelOpen(false)}
             />

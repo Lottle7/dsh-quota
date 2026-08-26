@@ -210,6 +210,14 @@ body[data-ds-dark-theme] .dsh-quota-floating.is-card { box-shadow: 0 16px 46px r
 .dsh-quota-floating-body > i { color: var(--q-text-3); transition: transform 150ms var(--q-ease); }
 .dsh-quota-floating-body:hover > i { color: var(--q-provider); transform: translateX(2px); }
 
+.dsh-quota-floating-budget { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 3px 8px; padding: 6px 11px 7px; border-top: 1px solid var(--q-line); background: color-mix(in srgb, var(--q-surface-2) 62%, transparent); color: var(--q-text-3); font-size: 7.5px; }
+.dsh-quota-floating-budget strong { color: var(--q-text-2); font-size: 8px; font-variant-numeric: tabular-nums; }
+.dsh-quota-floating-budget > i { grid-column: 1 / -1; height: 3px; overflow: hidden; border-radius: 99px; background: var(--q-surface-3); }
+.dsh-quota-floating-budget > i b { display: block; height: 100%; border-radius: inherit; background: var(--q-success); transition: width 220ms var(--q-ease); }
+.dsh-quota-floating-budget.is-warning > i b { background: var(--q-warning); }
+.dsh-quota-floating-budget.is-exceeded > i b { background: var(--q-danger); }
+.dsh-quota-floating-budget.is-unpriced > i b { width: 100% !important; background: repeating-linear-gradient(90deg, var(--q-warning) 0 4px, transparent 4px 7px); }
+
 .dsh-quota-floating-footer {
   min-height: 25px;
   display: flex;
@@ -521,6 +529,28 @@ body[data-ds-dark-theme] .dsh-quota-floating.is-card { box-shadow: 0 16px 46px r
 .dsh-quota-aggregate-meta { display: flex; gap: 14px; color: var(--q-text-3); font-size: 9px; }
 .dsh-quota-aggregate-meta strong { color: var(--q-text-2); font-weight: 630; font-variant-numeric: tabular-nums; }
 
+.dsh-quota-budget-summary { padding: 12px; border: 1px solid var(--q-line); border-radius: 13px; background: linear-gradient(145deg, color-mix(in srgb, var(--q-accent) 4%, var(--q-surface)), var(--q-surface)); }
+.dsh-quota-budget-summary-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+.dsh-quota-budget-summary-head strong { color: var(--q-text); font-size: 10px; font-weight: 670; }
+.dsh-quota-budget-summary-head span { color: var(--q-text-3); font-size: 8px; }
+.dsh-quota-budget-list { display: flex; flex-direction: column; gap: 7px; }
+.dsh-quota-budget-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 5px 10px; padding: 9px 10px; border: 1px solid var(--q-line); border-radius: 10px; background: var(--q-surface); }
+.dsh-quota-budget-row > div { min-width: 0; }
+.dsh-quota-budget-row span { display: block; color: var(--q-text-3); font-size: 8px; }
+.dsh-quota-budget-row strong { display: block; margin-top: 2px; overflow: hidden; color: var(--q-text-2); font-size: 9.5px; font-weight: 640; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.dsh-quota-budget-row > b { align-self: center; color: var(--q-success); font-size: 8.5px; font-weight: 650; white-space: nowrap; }
+.dsh-quota-budget-row > i { grid-column: 1 / -1; height: 4px; overflow: hidden; border-radius: 99px; background: var(--q-surface-3); }
+.dsh-quota-budget-row > i span { height: 100%; border-radius: inherit; background: var(--q-success); transition: width 240ms var(--q-ease); }
+.dsh-quota-budget-row.is-warning { border-color: color-mix(in srgb, var(--q-warning) 24%, var(--q-line)); }
+.dsh-quota-budget-row.is-warning > b { color: var(--q-warning); }
+.dsh-quota-budget-row.is-warning > i span { background: var(--q-warning); }
+.dsh-quota-budget-row.is-exceeded { border-color: color-mix(in srgb, var(--q-danger) 26%, var(--q-line)); }
+.dsh-quota-budget-row.is-exceeded > b { color: var(--q-danger); }
+.dsh-quota-budget-row.is-exceeded > i span { background: var(--q-danger); }
+.dsh-quota-budget-row.is-unpriced > b { color: var(--q-warning); }
+.dsh-quota-budget-row.is-unpriced > i span { width: 100% !important; background: repeating-linear-gradient(90deg, var(--q-warning) 0 5px, transparent 5px 8px); }
+.dsh-quota-budget-summary.is-compact .dsh-quota-budget-row { padding: 8px 9px; }
+
 .dsh-quota-pulse-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 7px; }
 .dsh-quota-pulse-grid > div { min-width: 0; padding: 10px; border: 1px solid var(--q-line); border-radius: 11px; background: var(--q-surface); }
 .dsh-quota-pulse-grid span { display: block; overflow: hidden; color: var(--q-text-3); font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
@@ -544,7 +574,10 @@ body[data-ds-dark-theme] .dsh-quota-floating.is-card { box-shadow: 0 16px 46px r
 .dsh-quota-breakdown-progress { grid-column: 1 / -1; height: 3px; overflow: hidden; border-radius: 99px; background: var(--q-surface-3); }
 .dsh-quota-breakdown-progress i { display: block; height: 100%; border-radius: inherit; background: var(--q-accent); }
 
-.dsh-quota-price-editor { padding: 13px; border: 1px solid var(--q-line); border-radius: 13px; background: var(--q-surface); }
+.dsh-quota-price-editor,
+.dsh-quota-budget-editor { padding: 13px; border: 1px solid var(--q-line); border-radius: 13px; background: var(--q-surface); }
+.dsh-quota-budget-editor-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.dsh-quota-budget-editor-grid .dsh-quota-field:last-child { grid-column: 1 / -1; }
 .dsh-quota-floating-settings { padding: 13px; border: 1px solid var(--q-line); border-radius: 13px; background: var(--q-surface); }
 .dsh-quota-floating-mode { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; padding: 3px; border-radius: 10px; background: var(--q-surface-2); }
 .dsh-quota-floating-mode button { appearance: none; min-height: 31px; padding: 0 8px; border: 0; border-radius: 8px; background: transparent; color: var(--q-text-3); cursor: pointer; font-size: 9px; font-weight: 620; }
@@ -622,6 +655,8 @@ body[data-ds-dark-theme] .dsh-quota-floating.is-card { box-shadow: 0 16px 46px r
   .dsh-quota-pulse-grid { grid-template-columns: repeat(2, 1fr); }
   .dsh-quota-provider-grid { grid-template-columns: 1fr; }
   .dsh-quota-price-grid { grid-template-columns: 1fr; }
+  .dsh-quota-budget-editor-grid { grid-template-columns: 1fr; }
+  .dsh-quota-budget-editor-grid .dsh-quota-field:last-child { grid-column: auto; }
   .dsh-quota-diagnostic-grid > div { grid-template-columns: 110px minmax(0, 1fr); }
   .dsh-quota-ledger-status { grid-template-columns: 34px minmax(0, 1fr); }
   .dsh-quota-ledger-status > button { grid-column: 1 / -1; }
